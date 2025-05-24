@@ -354,17 +354,22 @@
   // Function to load highlights from tabResults
   async function loadTabHighlights() {
     try {
-      const { tabResults = {} } = await chrome.storage.local.get('tabResults');
       const currentUrl = window.location.href;
+      console.log('Loading highlights for URL:', currentUrl);
       
-      console.log('Loading highlights:', {
-        currentUrl,
-        availableTabs: Object.keys(tabResults).length,
-        tabResults: tabResults
-      });
+      const { tabResults = {} } = await chrome.storage.local.get('tabResults');
+      console.log('All tab results:', Object.entries(tabResults).map(([key, data]) => ({
+        url: data.url,
+        type: data.type,
+        hasHighlights: !!data.highlights,
+        highlightCount: data.highlights?.length
+      })));
       
-      // Find the tab result that matches our URL
-      const matchingTab = Object.entries(tabResults).find(([_, data]) => data.url === currentUrl);
+      // Find matching tab data
+      const matchingTab = Object.entries(tabResults).find(([_, data]) => 
+        data.url === currentUrl || 
+        (data.url && currentUrl.startsWith(data.url))
+      );
       
       if (matchingTab) {
         const [tabId, data] = matchingTab;
@@ -373,7 +378,8 @@
           url: data.url,
           type: data.type,
           hasHighlights: !!data.highlights,
-          highlightCount: data.highlights?.length
+          highlightCount: data.highlights?.length,
+          highlights: data.highlights // Log the actual highlights array
         });
         
         // Only process highlights for non-HackerNews content
@@ -387,18 +393,23 @@
             console.log(`Applying highlight ${index + 1}/${data.highlights.length}:`, {
               text: h.text.substring(0, 50) + '...',
               type: h.type,
-              explanation: h.explanation
+              explanation: h.explanation,
+              suggestion: h.suggestion
             });
             highlightText(h.text, h.type, h.explanation, h.suggestion);
           });
           console.log(`Applied ${data.highlights.length} highlights from tab ${tabId}`);
-        } else if (data.type === 'hackernews') {
-          console.log('Skipping highlights for HackerNews content');
         } else {
-          console.log('No highlights to apply for this content');
+          console.log('No highlights to apply. Details:', {
+            isHackerNews: data.type === 'hackernews',
+            hasHighlights: !!data.highlights,
+            highlightCount: data.highlights?.length,
+            type: data.type
+          });
         }
       } else {
         console.log('No matching tab found for URL:', currentUrl);
+        console.log('Current URL:', currentUrl);
         console.log('Available URLs:', Object.values(tabResults).map(d => d.url));
       }
     } catch (error) {

@@ -58,25 +58,93 @@ function simpleMarkdown(text) {
         text += '</table>';
     }
 
-    // Convert ordered lists
-    text = text.replace(/^\s*\d+\.\s+(.*$)/gm, '<li>$1</li>');
-    text = text.replace(/(<li>.*<\/li>)/gs, (match) => {
-        // Only wrap in ol if it's a sequence of list items
-        if (match.split('</li><li>').length > 1) {
-            return `<ol>${match}</ol>`;
-        }
-        return match;
-    });
+    // Process lists
+    function processListItems(text, listType, pattern) {
+        if (!text) return '';  // Handle empty text
+        
+        const lines = text.split('\n');
+        let result = [];
+        let listStack = []; // Stack to track nested lists
+        let currentLine = 0;
 
-    // Convert unordered lists
-    text = text.replace(/^\s*[-*]\s+(.*$)/gm, '<li>$1</li>');
-    text = text.replace(/(<li>.*<\/li>)/gs, (match) => {
-        // Only wrap in ul if it's a sequence of list items
-        if (match.split('</li><li>').length > 1) {
-            return `<ul>${match}</ul>`;
+        while (currentLine < lines.length) {
+            const line = lines[currentLine];
+            if (!line) {  // Handle empty lines
+                result.push('');
+                currentLine++;
+                continue;
+            }
+
+            const match = line.match(pattern);
+            
+            if (match && match[1] !== undefined && match[2] !== undefined) {
+                const spaces = match[1] || '';  // Ensure spaces is a string
+                const content = match[2] || '';  // Ensure content is a string
+                const indent = spaces.length;
+                const level = Math.floor(indent / 4);
+
+                // Close lists until we reach the right level
+                while (listStack.length > level) {
+                    if (listStack.length > 0) {  // Extra safety check
+                        result.push('</li></' + listStack.pop() + '>');
+                    }
+                }
+
+                // If we need to start a new list level
+                if (listStack.length < level) {
+                    // Start a new list at this level
+                    if (listStack.length > 0) {
+                        // If we have a parent list, close the current list item and start a new list
+                        result.push('</li><li><' + listType + '><li>' + content);
+                    } else {
+                        result.push('<' + listType + '><li>' + content);
+                    }
+                    listStack.push(listType);
+                } else {
+                    // Continue at current level
+                    if (listStack.length > 0) {
+                        result.push('</li><li>' + content);
+                    } else {
+                        result.push('<' + listType + '><li>' + content);
+                        listStack.push(listType);
+                    }
+                }
+            } else {
+                // Not a list item
+                if (listStack.length > 0) {
+                    // Check if next line is a list item at same or deeper level
+                    const nextLine = lines[currentLine + 1];
+                    if (nextLine) {  // Only process if next line exists
+                        const nextMatch = nextLine.match(pattern);
+                        const nextIndent = nextMatch && nextMatch[1] ? (nextMatch[1] || '').length : -1;
+                        const nextLevel = Math.floor(nextIndent / 4);
+
+                        if (!nextMatch || nextLevel < listStack.length) {
+                            // Close all open lists
+                            while (listStack.length > 0) {
+                                result.push('</li></' + listStack.pop() + '>');
+                            }
+                        }
+                    }
+                }
+                result.push(line);
+            }
+            currentLine++;
         }
-        return match;
-    });
+
+        // Close any remaining open lists
+        while (listStack.length > 0) {
+            result.push('</li></' + listStack.pop() + '>');
+        }
+
+        return result.join('\n');
+    }
+
+    // Process ordered lists
+    text = processListItems(text, 'ol', /^(\s*)\d+\.\s+(.+)$/gm);
+    
+    // Process unordered lists
+    text = processListItems(text, 'ul', /^(\s*)[-*]\s+(.+)$/gm);
 
     // Convert paragraphs (but not if it's already a list item, header, or table)
     text = text.replace(/^(?!<[h|u|o|p|t])(.*$)/gm, (match) => {

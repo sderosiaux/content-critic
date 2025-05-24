@@ -289,6 +289,36 @@
 
     .markdown-content li {
       margin: 0.15em 0;
+      display: list-item;
+    }
+
+    /* Add styles for nested lists */
+    .markdown-content ul ul,
+    .markdown-content ol ol,
+    .markdown-content ul ol,
+    .markdown-content ol ul {
+      margin: 0.15em 0;
+      padding-left: 2em;
+    }
+
+    /* Ensure list items with nested content maintain proper indentation */
+    .markdown-content li > p {
+      margin: 0.15em 0;
+    }
+
+    .markdown-content li > ul,
+    .markdown-content li > ol {
+      margin: 0.15em 0;
+    }
+
+    /* Style for list items with multiple paragraphs */
+    .markdown-content li p {
+      margin: 0.15em 0;
+    }
+
+    /* Ensure proper spacing between list items with nested content */
+    .markdown-content li + li {
+      margin-top: 0.3em;
     }
 
     .markdown-content code {
@@ -380,12 +410,45 @@
     .secondary-button:hover {
       background-color: #e5e5e5;
     }
+
+    .action-button {
+      padding: 6px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f8f9fa;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s ease;
+    }
+
+    .action-button:hover {
+      background: #e9ecef;
+      border-color: #adb5bd;
+    }
+
+    .action-button.copied {
+      background: #28a745;
+      color: white;
+      border-color: #28a745;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <div class="header-left">Content Critic</div>
     <div class="header-right">
+      <button id="resetTabBtn" class="header-button" title="Reset Tab State">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        Reset Tab
+      </button>
       <button id="apiKeyBtn" class="header-button" title="API Key">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M15 7h3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3m-6 0H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3m0 0V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2M9 7h6"/>
@@ -433,16 +496,19 @@
     <div class="raw-content-content">
       <div class="raw-content-header">
         <div class="raw-content-title">Raw Content</div>
-        <div id="rawContentTokenInfo" class="token-info"></div>
+        <div class="modal-actions">
+          <button id="copyContentBtn" class="action-button">Copy Content</button>
+          <button id="closeRawContentBtn" class="close-button">×</button>
+        </div>
       </div>
+      <div id="rawContentTokenInfo" class="token-info"></div>
       <div id="rawContentText" class="raw-content-body"></div>
       <div id="rawContentEdit" class="raw-content-body" style="display: none;">
         <textarea id="rawContentTextarea" style="width: 100%; height: 100%; min-height: 200px; border: none; resize: vertical; font-family: monospace; font-size: 13px; line-height: 1.5;"></textarea>
-      </div>
-      <div class="raw-content-actions">
-        <button id="saveContentBtn" class="header-button primary" style="display: none;">Save & Reanalyze</button>
-        <button id="cancelEditBtn" class="header-button" style="display: none;">Cancel</button>
-        <button id="closeRawContentBtn" class="header-button">Close</button>
+        <div class="edit-actions">
+          <button id="saveContentBtn" class="action-button">Save</button>
+          <button id="cancelEditBtn" class="action-button">Cancel</button>
+        </div>
       </div>
     </div>
   </div>

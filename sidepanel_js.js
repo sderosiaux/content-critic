@@ -1,6 +1,7 @@
 // sidepanel.js
 let contentType = 'generic';
 let currentTabId = null;
+let isAnalyzing = false;  // Add state tracking for analysis
 
 // Token limits
 const MAX_TOKENS_REGULAR = 8000;
@@ -30,7 +31,7 @@ Your response must be in JSON format with the following structure:
 {
   "analysis": {
     "summary": "A 5-10 rows table (Markdown format) summary highlighting core premise, risks, effects, and tradeoffs",
-    "critique": "Your detailed analysis and critique in markdown format"
+    "critique": "Your detailed analysis and critique in markdown format using #, ##, ### for headers."
   },
   "highlights": [
     {
@@ -63,6 +64,9 @@ Structure your analysis as follows:
 - **Challenges & Concerns**: Major issues, risks, and obstacles raised
 - **Actionable Insights**: Concrete takeaways and next steps
 
+Don't add comments before and after your analysis.
+Answer using the markdown format only, using #, ##, ### for headers.
+
 Here are the HackerNews comments to analyze:`;
 
 // Sauvegarde la clé API
@@ -76,72 +80,258 @@ function filterHighlights(content) {
   if (!content) return '';
   
   // Remove any text that matches our highlight patterns
+  // These patterns should only match our actual highlight annotations
   const highlightPatterns = [
-    /(?:Assumption|Fallacy|Contradiction|Inconsistency|Fluff)[\s\S]*?(?=Assumption|Fallacy|Contradiction|Inconsistency|Fluff|$)/gi,
-    /SUGGESTION[\s\S]*?(?=Assumption|Fallacy|Contradiction|Inconsistency|Fluff|SUGGESTION|$)/gi
+    // Match our highlight annotations with their explanations
+    // Must start with the type in all caps, followed by a colon
+    /^(?:ASSUMPTION|FALLACY|CONTRADICTION|INCONSISTENCY|FLUFF):\s*[^\n]*(?:\n(?!\n)[^\n]*)*/gim,
+    // Match our suggestion annotations
+    // Must start with SUGGESTION in all caps, followed by a colon
+    /^SUGGESTION:\s*[^\n]*(?:\n(?!\n)[^\n]*)*/gim
   ];
   
   let cleanContent = content;
-  highlightPatterns.forEach(pattern => {
-    cleanContent = cleanContent.replace(pattern, '');
+  let totalRemoved = 0;
+  
+  highlightPatterns.forEach((pattern, index) => {
+    const beforeLength = cleanContent.length;
+    const matches = cleanContent.match(pattern) || [];
+    
+    if (matches.length > 0) {
+      console.log(`Removed ${matches.length} highlight annotations`);
+    }
+    
+    cleanContent = cleanContent.replace(pattern, (match) => {
+      totalRemoved += match.length;
+      return '';
+    });
   });
   
   // Clean up any extra whitespace created by the removal
-  return cleanContent
+  cleanContent = cleanContent
     .replace(/\n\s*\n\s*\n/g, '\n\n') // Replace multiple newlines with double newlines
     .replace(/^\s+|\s+$/g, ''); // Trim whitespace
+  
+  if (totalRemoved > 0) {
+    console.log('Content filtering:', {
+      initialLength: content.length,
+      finalLength: cleanContent.length,
+      removed: totalRemoved
+    });
+  }
+  
+  return cleanContent;
 }
 
-// Analyse le contenu avec l'API
+// Helper function to set loading state
+function setLoadingState(isLoading) {
+  const resultDiv = document.getElementById('result');
+  const analyzeBtn = document.getElementById('analyzeBtn');
+  
+  if (isLoading) {
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = 'Analyzing...';
+    resultDiv.innerHTML = `
+      <div class="loading">
+        <div class="spinner"></div>
+        <div>Analyzing content...</div>
+      </div>`;
+  } else {
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = 'Analyze';
+  }
+}
+
+// Helper function to sync UI state with tab's analysis status
+async function syncUIWithTabState(urlKey) {
+  const { tabResults = {} } = await chrome.storage.local.get('tabResults');
+  const tabData = tabResults[urlKey];
+  
+  if (tabData?.isAnalyzing) {
+    setLoadingState(true);
+  } else {
+    setLoadingState(false);
+  }
+}
+
+// Helper function to get a clean URL key
+function getUrlKey(url) {
+  try {
+    // Remove trailing slash and hash
+    return url.replace(/\/$/, '').split('#')[0];
+  } catch (e) {
+    console.error('Error getting URL key:', e);
+    return url;
+  }
+}
+
+// Helper function to make API calls
+async function makeApiCall(apiKey, prompt, isHackerNews) {
+  let apiResponse;
+  let analysisResult;
+  let highlights = [];
+
+  if (apiKey.startsWith('sk-ant-')) {
+    // Claude API
+    const requestBody = {
+      model: 'claude-3-sonnet-20240229',
+      max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
+      messages: [{
+        role: 'user',
+        content: prompt
+      }]
+    };
+    console.log('Claude API request:', requestBody);
+    
+    apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    const data = await apiResponse.json();
+    
+    if (data.error) {
+      throw new Error(data.error.message);
+    }
+    
+    // Store the raw response
+    const rawResponse = data.content[0].text;
+    
+    if (isHackerNews) {
+      analysisResult = rawResponse;
+    } else {
+      try {
+        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const result = JSON.parse(jsonMatch[0]);
+          analysisResult = result.analysis;
+          highlights = result.highlights;
+        } else {
+          analysisResult = rawResponse;
+        }
+      } catch (e) {
+        console.error('Failed to parse JSON response:', e);
+        analysisResult = rawResponse;
+      }
+    }
+    
+    return { analysisResult, highlights, rawResponse };
+    
+  } else if (apiKey.startsWith('sk-')) {
+    // OpenAI API
+    const requestBody = {
+      model: 'gpt-4.1',
+      messages: [{
+        role: 'user',
+        content: prompt
+      }],
+      max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR
+    };
+    console.log('OpenAI API request:', requestBody);
+    
+    apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    const data = await apiResponse.json();
+    
+    if (data.error) {
+      throw new Error(data.error.message);
+    }
+    
+    // Store the raw response
+    const rawResponse = data.choices[0].message.content;
+    
+    if (isHackerNews) {
+      analysisResult = rawResponse;
+    } else {
+      try {
+        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const result = JSON.parse(jsonMatch[0]);
+          analysisResult = result.analysis;
+          highlights = result.highlights;
+        } else {
+          analysisResult = rawResponse;
+        }
+      } catch (e) {
+        console.error('Failed to parse JSON response:', e);
+        analysisResult = rawResponse;
+      }
+    }
+    
+    return { analysisResult, highlights, rawResponse };
+  }
+  
+  throw new Error('Invalid API key format');
+}
+
+// Helper function to store analysis results
+async function storeAnalysisResults(urlKey, data) {
+  const { tabResults = {} } = await chrome.storage.local.get('tabResults');
+  tabResults[urlKey] = {
+    ...data,
+    timestamp: Date.now(),
+    isAnalyzing: false
+  };
+  await chrome.storage.local.set({ tabResults });
+}
+
+// Helper function to update analyzing state
+async function updateAnalyzingState(urlKey, isAnalyzing, tabId) {
+  const { tabResults = {} } = await chrome.storage.local.get('tabResults');
+  tabResults[urlKey] = {
+    ...tabResults[urlKey],
+    isAnalyzing,
+    timestamp: Date.now(),
+    tabId
+  };
+  await chrome.storage.local.set({ tabResults });
+}
+
 async function analyzeContent() {
   // Get API key from storage first, then fallback to input
   const { apiKey: storedApiKey } = await chrome.storage.local.get(['apiKey']);
   const inputApiKey = document.getElementById('apiKey').value;
   const apiKey = storedApiKey || inputApiKey;
   
-  const resultDiv = document.getElementById('result');
-  const analyzeBtn = document.getElementById('analyzeBtn');
-  
   if (!apiKey) {
-    resultDiv.innerHTML = '<div class="result error">Please enter your API key</div>';
+    displayError('Please enter your API key');
     return;
   }
-
+  
   // Get current tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) {
-    resultDiv.innerHTML = '<div class="result error">Unable to find active tab</div>';
+    displayError('Unable to find active tab');
     return;
   }
 
+  const urlKey = getUrlKey(tab.url);
   currentTabId = tab.id;
+  isAnalyzing = true;
   
   // Save the API key if it's from input
   if (inputApiKey && inputApiKey !== storedApiKey) {
     saveApiKey();
   }
   
-  // État de chargement
-  analyzeBtn.disabled = true;
-  analyzeBtn.textContent = 'Analyzing...';
-  resultDiv.innerHTML = `
-    <div class="loading">
-      <div class="spinner"></div>
-      <div>Analyzing content...</div>
-    </div>`;
+  setLoadingState(true);
+  await updateAnalyzingState(urlKey, true, tab.id);
   
   try {
-    // Vérifie si le content script est injecté
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['content.js']
-      });
-    } catch (err) {
-      // Le script est déjà injecté, on continue
-    }
-
-    // Récupère le contenu de la page active
+    // Get page content
     const response = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Timeout: Unable to get page content'));
@@ -163,16 +353,12 @@ async function analyzeContent() {
 
     // Filter out our own highlights from the content
     const cleanContent = filterHighlights(response.content);
-
-    // Store the clean raw content without showing the modal
     currentRawContent = cleanContent;
-    const tokenInfo = document.getElementById('rawContentTokenInfo');
-    tokenInfo.textContent = computeTokenInfo(cleanContent).displayText;
-
-    let apiResponse;
-    let analysisResult;
-    let highlights = [];
     
+    // Update token info
+    const tokenInfo = computeTokenInfo(cleanContent);
+    document.getElementById('rawContentTokenInfo').textContent = tokenInfo.displayText;
+
     // Determine if we're on HackerNews
     const isHackerNews = tab.url.includes('news.ycombinator.com');
     
@@ -182,124 +368,29 @@ async function analyzeContent() {
       CRITIC_PROMPT + '\n\n' + cleanContent;
     
     console.log('Using prompt for:', isHackerNews ? 'HackerNews' : 'Generic content');
-    
-    // Détecte le type d'API basé sur la clé
-    if (apiKey.startsWith('sk-ant-')) {
-      // Claude API
-      apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: 'claude-3-sonnet-20240229',
-          max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
-          messages: [{
-            role: 'user',
-            content: prompt
-          }]
-        })
-      });
-      
-      const data = await apiResponse.json();
-      
-      if (data.error) {
-        throw new Error(data.error.message);
-      }
-      
-      // Store the raw response
-      currentRawResponse = data.content[0].text;
-      
-      if (isHackerNews) {
-        // For HackerNews, use the raw text response
-        analysisResult = currentRawResponse;
-      } else {
-        // For generic content, try to parse JSON
-        try {
-          const responseText = data.content[0].text;
-          // Try to find JSON in the response
-          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const result = JSON.parse(jsonMatch[0]);
-            analysisResult = result.analysis;
-            highlights = result.highlights;
-          } else {
-            // If no JSON found, use the raw text
-            analysisResult = responseText;
-          }
-        } catch (e) {
-          console.error('Failed to parse JSON response:', e);
-          analysisResult = data.content[0].text; // Fallback to raw text
-        }
-      }
-      
-    } else if (apiKey.startsWith('sk-')) {
-      // OpenAI API
-      apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-4.1',
-          messages: [{
-            role: 'user',
-            content: prompt
-          }],
-          max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
-        })
-      });
-      
-      const data = await apiResponse.json();
-      
-      if (data.error) {
-        throw new Error(data.error.message);
-      }
-      
-      // Store the raw response
-      currentRawResponse = data.choices[0].message.content;
-      
-      if (isHackerNews) {
-        // For HackerNews, use the raw text response
-        analysisResult = currentRawResponse;
-      } else {
-        // For generic content, try to parse JSON
-        try {
-          const responseText = data.choices[0].message.content;
-          // Try to find JSON in the response
-          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const result = JSON.parse(jsonMatch[0]);
-            analysisResult = result.analysis;
-            highlights = result.highlights;
-          } else {
-            // If no JSON found, use the raw text
-            analysisResult = responseText;
-          }
-        } catch (e) {
-          console.error('Failed to parse JSON response:', e);
-          analysisResult = data.choices[0].message.content; // Fallback to raw text
-        }
-      }
-    }
+    console.log('Token limits:', {
+      isHackerNews,
+      maxTokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
+      contentLength: cleanContent.length,
+      promptLength: prompt.length,
+      estimatedTokens: Math.ceil(prompt.length / 4)
+    });
 
-    // Store the analysis result for this tab
-    const { tabResults = {} } = await chrome.storage.local.get('tabResults');
-    tabResults[tab.id] = {
+    // Make API call
+    const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews);
+    currentRawResponse = rawResponse;
+
+    // Store results
+    await storeAnalysisResults(urlKey, {
       content: cleanContent,
       title: response.title,
       url: response.url,
       analysis: analysisResult,
-      rawResponse: currentRawResponse,
+      rawResponse,
       highlights: isHackerNews ? [] : highlights,
-      timestamp: Date.now(),
-      type: isHackerNews ? 'hackernews' : 'generic'
-    };
-    await chrome.storage.local.set({ tabResults });
+      type: isHackerNews ? 'hackernews' : 'generic',
+      tabId: tab.id
+    });
 
     // Send highlights to content script only for non-HN content
     if (!isHackerNews && highlights.length > 0) {
@@ -309,14 +400,27 @@ async function analyzeContent() {
       });
     }
 
-    // Display the analysis
-    displayResult(analysisResult, response.title);
+    // Check if we're still on the same tab before displaying
+    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (currentTab.id === tab.id) {
+      displayResult(analysisResult, response.title);
+    }
     
   } catch (error) {
-    displayError('Error: ' + error.message);
+    await updateAnalyzingState(urlKey, false, tab.id);
+    
+    // Only display error if we're still on the same tab
+    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (currentTab.id === tab.id) {
+      displayError('Error: ' + error.message);
+    }
   } finally {
-    analyzeBtn.disabled = false;
-    analyzeBtn.textContent = 'Analyze';
+    // Only update UI state if we're still on the same tab
+    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (currentTab.id === tab.id) {
+      isAnalyzing = false;
+      setLoadingState(false);
+    }
   }
 }
 
@@ -425,11 +529,13 @@ document.addEventListener('DOMContentLoaded', () => {
       textDiv.style.display = 'block';
       editDiv.style.display = 'none';
       
-      // Hide edit buttons
+      // Show/hide appropriate buttons
       document.getElementById('saveContentBtn').style.display = 'none';
       document.getElementById('cancelEditBtn').style.display = 'none';
+      document.getElementById('copyContentBtn').style.display = 'block';
     } else {
       textDiv.textContent = 'No content available';
+      document.getElementById('copyContentBtn').style.display = 'none';
     }
     
     modal.classList.add('visible');
@@ -474,12 +580,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const textarea = document.getElementById('rawContentTextarea');
     const saveBtn = document.getElementById('saveContentBtn');
     const cancelBtn = document.getElementById('cancelEditBtn');
+    const copyBtn = document.getElementById('copyContentBtn');
     
     textarea.value = currentRawContent;
     textDiv.style.display = 'none';
     editDiv.style.display = 'block';
     saveBtn.style.display = 'block';
     cancelBtn.style.display = 'block';
+    copyBtn.style.display = 'none';
     textarea.focus();
   });
 
@@ -496,18 +604,18 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('saveContentBtn').style.display = 'none';
       document.getElementById('cancelEditBtn').style.display = 'none';
       
-      // Reanalyze with new content
-      const analyzeBtn = document.getElementById('analyzeBtn');
-      analyzeBtn.disabled = true;
-      analyzeBtn.textContent = 'Reanalyzing...';
+      setLoadingState(true);
       
       try {
         const apiKey = document.getElementById('apiKey').value;
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const urlKey = getUrlKey(tab.url);
         
         if (!tab) {
           throw new Error('No active tab found');
         }
+        
+        await updateAnalyzingState(urlKey, true, tab.id);
         
         // Choose prompt based on the URL
         const isHackerNews = tab.url.includes('news.ycombinator.com');
@@ -515,75 +623,41 @@ document.addEventListener('DOMContentLoaded', () => {
           HACKERNEWS_PROMPT + '\n\n' + newContent :
           CRITIC_PROMPT + '\n\n' + newContent;
         
-        let analysisResult;
-        
-        if (apiKey.startsWith('sk-ant-')) {
-          // Claude API
-          const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true'
-            },
-            body: JSON.stringify({
-              model: 'claude-3-sonnet-20240229',
-              max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
-              messages: [{
-                role: 'user',
-                content: prompt
-              }]
-            })
-          });
-          
-          const data = await apiResponse.json();
-          if (data.error) throw new Error(data.error.message);
-          analysisResult = data.content[0].text;
-          
-        } else if (apiKey.startsWith('sk-')) {
-          // OpenAI API
-          const apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-              model: 'gpt-4.1',
-              messages: [{
-                role: 'user',
-                content: prompt
-              }],
-              max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
-            })
-          });
-          
-          const data = await apiResponse.json();
-          if (data.error) throw new Error(data.error.message);
-          analysisResult = data.choices[0].message.content;
-        }
-        
-        // Store the analysis result
-        const { tabResults = {} } = await chrome.storage.local.get('tabResults');
-        tabResults[tab.id] = {
+        // Make API call
+        const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews);
+        currentRawResponse = rawResponse;
+
+        // Store results
+        await storeAnalysisResults(urlKey, {
           content: newContent,
           title: tab.title,
           url: tab.url,
           analysis: analysisResult,
-          rawResponse: currentRawResponse,
-          timestamp: Date.now(),
-          type: isHackerNews ? 'hackernews' : 'generic'
-        };
-        await chrome.storage.local.set({ tabResults });
+          rawResponse,
+          highlights: isHackerNews ? [] : highlights,
+          type: isHackerNews ? 'hackernews' : 'generic',
+          tabId: tab.id
+        });
         
-        displayResult(analysisResult, tab.title);
+        // Check if we're still on the same tab before displaying
+        const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (currentTab.id === tab.id) {
+          displayResult(analysisResult, tab.title);
+        }
         
       } catch (error) {
-        displayError('Error reanalyzing: ' + error.message);
+        const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (currentTab) {
+          await updateAnalyzingState(getUrlKey(currentTab.url), false, currentTab.id);
+          if (currentTab.id === tab.id) {
+            displayError('Error reanalyzing: ' + error.message);
+          }
+        }
       } finally {
-        analyzeBtn.disabled = false;
-        analyzeBtn.textContent = 'Analyze';
+        const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (currentTab && currentTab.id === tab.id) {
+          setLoadingState(false);
+        }
       }
     }
   });
@@ -594,6 +668,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('rawContentText').style.display = 'block';
     document.getElementById('saveContentBtn').style.display = 'none';
     document.getElementById('cancelEditBtn').style.display = 'none';
+    document.getElementById('copyContentBtn').style.display = 'block';
   });
 
   // Close modals when clicking outside
@@ -612,6 +687,9 @@ document.addEventListener('DOMContentLoaded', () => {
       rawResponseModal.classList.remove('visible');
     }
   });
+
+  // Reset tab button
+  document.getElementById('resetTabBtn').addEventListener('click', resetTabState);
 
   // Initialize the extension
   initializeExtension();
@@ -646,8 +724,13 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     if (!tab.url || !tab.url.startsWith('http')) {
       console.log('Not a valid web page, clearing results');
       document.getElementById('result').innerHTML = '';
+      setLoadingState(false);  // Reset UI state
       return;
     }
+    
+    // Sync UI state with the new tab's analysis status
+    const urlKey = getUrlKey(tab.url);
+    await syncUIWithTabState(urlKey);
     
     // Clear current result and load stored analysis
     document.getElementById('result').innerHTML = '';
@@ -655,6 +738,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   } catch (error) {
     console.error('Error handling tab activation:', error);
     document.getElementById('result').innerHTML = '';
+    setLoadingState(false);  // Reset UI state on error
   }
 });
 
@@ -667,8 +751,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       if (!tab.url || !tab.url.startsWith('http')) {
         console.log('Not a valid web page, clearing results');
         document.getElementById('result').innerHTML = '';
+        setLoadingState(false);  // Reset UI state
         return;
       }
+      
+      // Sync UI state with the updated tab's analysis status
+      const urlKey = getUrlKey(tab.url);
+      await syncUIWithTabState(urlKey);
       
       // Clear the current result since we're on a new page
       document.getElementById('result').innerHTML = '';
@@ -677,6 +766,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     } catch (error) {
       console.error('Error handling tab update:', error);
       document.getElementById('result').innerHTML = '';
+      setLoadingState(false);  // Reset UI state on error
     }
   }
 });
@@ -717,7 +807,7 @@ function showRawContent(content) {
   modal.classList.add('visible');
 }
 
-// Modify loadStoredAnalysis to use computeTokenInfo
+// Update loadStoredAnalysis to use URL
 async function loadStoredAnalysis(tabId) {
   if (!tabId) {
     console.log('No tabId provided to loadStoredAnalysis');
@@ -732,28 +822,36 @@ async function loadStoredAnalysis(tabId) {
     if (!tab || !tab.url) {
       console.log('No valid tab or URL found');
       document.getElementById('result').innerHTML = '';
+      setLoadingState(false);
       return;
     }
 
+    const urlKey = getUrlKey(tab.url);
     const storage = await chrome.storage.local.get('tabResults');
     console.log('All stored results:', storage.tabResults);
     
     if (!storage || !storage.tabResults) {
       console.log('No tabResults found in storage');
       document.getElementById('result').innerHTML = '';
+      setLoadingState(false);
       return;
     }
 
-    const tabData = storage.tabResults[tabId];
+    const tabData = storage.tabResults[urlKey];
     console.log('Found tab data:', { 
       tabId, 
+      urlKey,
       currentUrl: tab.url, 
       storedUrl: tabData?.url,
-      hasAnalysis: !!tabData?.analysis 
+      hasAnalysis: !!tabData?.analysis,
+      isAnalyzing: tabData?.isAnalyzing
     });
     
-    // Only show stored analysis if the URL matches and we have analysis data
-    if (tabData?.analysis && tabData?.url === tab.url) {
+    // Sync UI state with the tab's analysis status
+    await syncUIWithTabState(urlKey);
+    
+    // Only show stored analysis if we have analysis data
+    if (tabData?.analysis) {
       console.log('Displaying stored analysis for URL:', tab.url);
       displayResult(tabData.analysis, tabData.title);
       // Store the raw content and response
@@ -768,16 +866,18 @@ async function loadStoredAnalysis(tabId) {
     } else {
       console.log('No matching analysis found:', {
         hasTabData: !!tabData,
-        hasAnalysis: !!tabData?.analysis,
-        urlMatch: tabData?.url === tab.url
+        hasAnalysis: !!tabData?.analysis
       });
       document.getElementById('result').innerHTML = '';
       currentRawContent = null;
+      currentRawResponse = null;
     }
   } catch (error) {
     console.error('Error loading stored analysis:', error);
     document.getElementById('result').innerHTML = '';
     currentRawContent = null;
+    currentRawResponse = null;
+    setLoadingState(false);
   }
 }
 
@@ -824,9 +924,9 @@ async function cleanupOldTabResults() {
     let cleanedCount = 0;
     
     // Filter out old results
-    Object.entries(tabResults).forEach(([tabId, data]) => {
+    Object.entries(tabResults).forEach(([urlKey, data]) => {
       if (data.timestamp && (now - data.timestamp) < ONE_WEEK_MS) {
-        cleanedResults[tabId] = data;
+        cleanedResults[urlKey] = data;
       } else {
         cleanedCount++;
       }
@@ -834,11 +934,11 @@ async function cleanupOldTabResults() {
     
     // Only update storage if we actually cleaned something
     if (cleanedCount > 0) {
-      console.log(`Cleaned up ${cleanedCount} old tab results`);
+      console.log(`Cleaned up ${cleanedCount} old URL results`);
       await chrome.storage.local.set({ tabResults: cleanedResults });
     }
   } catch (error) {
-    console.error('Error cleaning up old tab results:', error);
+    console.error('Error cleaning up old URL results:', error);
   }
 }
 
@@ -872,3 +972,56 @@ async function initializeExtension() {
 
 // Replace the separate initialization calls with our new function
 initializeExtension();
+
+// Update resetTabState to use URL
+async function resetTabState() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      console.log('No active tab found');
+      return;
+    }
+
+    const urlKey = getUrlKey(tab.url);
+    // Get current tab results
+    const { tabResults = {} } = await chrome.storage.local.get('tabResults');
+    
+    // Remove this URL's data
+    if (tabResults[urlKey]) {
+      delete tabResults[urlKey];
+      await chrome.storage.local.set({ tabResults });
+      console.log('Reset state for URL:', urlKey);
+    }
+
+    // Clear UI state
+    document.getElementById('result').innerHTML = '';
+    currentRawContent = null;
+    currentRawResponse = null;
+    setLoadingState(false);
+    
+    // Clear any highlights in the content script
+    chrome.tabs.sendMessage(tab.id, { action: "clearHighlights" });
+    
+  } catch (error) {
+    console.error('Error resetting tab state:', error);
+  }
+}
+
+// Copy content button handling
+document.getElementById('copyContentBtn').addEventListener('click', async () => {
+  if (currentRawContent) {
+    try {
+      await navigator.clipboard.writeText(currentRawContent);
+      const copyBtn = document.getElementById('copyContentBtn');
+      const originalText = copyBtn.textContent;
+      copyBtn.textContent = 'Copied!';
+      copyBtn.classList.add('copied');
+      setTimeout(() => {
+        copyBtn.textContent = originalText;
+        copyBtn.classList.remove('copied');
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy content:', err);
+    }
+  }
+});
