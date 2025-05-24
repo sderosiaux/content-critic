@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Content Critic",
+  "version": "1.0",
+  "description": "Analyse et critique le contenu des pages web avec l'IA",
+  
+  "permissions": [
+    "activeTab",
+    "sidePanel",
+    "storage",
+    "scripting"
+  ],
+  
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }],
+  
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  
+  "action": {
+    "default_title": "Analyser cette page"
+  }
+}

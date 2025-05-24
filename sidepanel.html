@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Content Critic</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      margin: 0;
+      padding: 0;
+      color: #333;
+      background: #f5f5f5;
+      min-width: 100%;
+      box-sizing: border-box;
+    }
+
+    .container {
+      width: 100%;
+      margin: 0;
+      background: white;
+      padding: 20px;
+      box-sizing: border-box;
+      min-height: 100vh;
+    }
+
+    /* When side panel is expanded */
+    @media (min-width: 600px) {
+      .container {
+        padding: 24px 32px;
+      }
+    }
+
+    /* When side panel is collapsed */
+    @media (max-width: 599px) {
+      .container {
+        padding: 16px;
+      }
+    }
+
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 20px;
+      font-size: 24px;
+    }
+
+    .input-group {
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #666;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    button {
+      background: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.3s;
+    }
+
+    button:hover {
+      background: #2980b9;
+    }
+
+    button:disabled {
+      background: #95a5a6;
+      cursor: not-allowed;
+    }
+
+    .result {
+      margin-top: 20px;
+      padding: 16px;
+      border-radius: 4px;
+      background: #f8f9fa;
+    }
+
+    .error {
+      color: #e74c3c;
+      background: #fdf3f2;
+    }
+
+    .loading {
+      color: #666;
+      font-style: italic;
+    }
+
+    #contentPreview {
+      margin: 16px 0;
+      padding: 12px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      font-size: 14px;
+      color: #666;
+    }
+
+    /* Styles pour le contenu markdown */
+    .markdown-content {
+      line-height: 1.6;
+      font-size: 16px;
+    }
+
+    .article-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #2c3e50;
+      margin-bottom: 24px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #3498db;
+    }
+
+    .markdown-content h1,
+    .markdown-content h2,
+    .markdown-content h3,
+    .markdown-content h4,
+    .markdown-content h5,
+    .markdown-content h6 {
+      margin-top: 28px;
+      margin-bottom: 20px;
+      font-weight: 600;
+      line-height: 1.3;
+      color: #2c3e50;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .markdown-content h1 { 
+      font-size: 2.4em;
+      color: #1a365d;
+      border-bottom: 2px solid #3498db;
+      padding-bottom: 12px;
+    }
+    
+    .markdown-content h2 { 
+      font-size: 2em;
+      color: #2c5282;
+      border-bottom: 1px solid #3498db;
+    }
+    
+    .markdown-content h3 { 
+      font-size: 1.6em;
+      color: #2c3e50;
+    }
+    
+    .markdown-content h4 { 
+      font-size: 1.4em;
+      color: #2c3e50;
+    }
+    
+    .markdown-content h5 { 
+      font-size: 1.2em;
+      color: #2c3e50;
+    }
+    
+    .markdown-content h6 { 
+      font-size: 1.1em;
+      color: #2c3e50;
+      font-style: italic;
+    }
+
+    .markdown-content p {
+      margin-bottom: 12px;
+      font-size: 16px;
+    }
+
+    .markdown-content ul,
+    .markdown-content ol {
+      margin-bottom: 12px;
+      padding-left: 2em;
+      font-size: 16px;
+    }
+
+    .markdown-content li {
+      margin-bottom: 8px;
+    }
+
+    .markdown-content code {
+      background: #f1f1f1;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 0.95em;
+    }
+
+    .markdown-content pre {
+      background: #f1f1f1;
+      padding: 20px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-bottom: 20px;
+      font-size: 15px;
+    }
+
+    .markdown-content pre code {
+      background: none;
+      padding: 0;
+      font-size: 15px;
+    }
+
+    .markdown-content blockquote {
+      margin: 20px 0;
+      padding: 0 20px;
+      color: #666;
+      border-left: 4px solid #ddd;
+      font-size: 16px;
+    }
+
+    .markdown-content hr {
+      margin: 28px 0;
+      border: none;
+      border-top: 1px solid #ddd;
+    }
+
+    .markdown-content a {
+      color: #3498db;
+      text-decoration: none;
+      font-size: 16px;
+    }
+
+    .markdown-content a:hover {
+      text-decoration: underline;
+    }
+
+    .markdown-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-bottom: 20px;
+      font-size: 16px;
+    }
+
+    .markdown-content th,
+    .markdown-content td {
+      padding: 12px;
+      border: 1px solid #ddd;
+    }
+
+    .markdown-content th {
+      background: #f8f9fa;
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    /* Add spacing after headers */
+    .markdown-content h1 + *,
+    .markdown-content h2 + *,
+    .markdown-content h3 + *,
+    .markdown-content h4 + *,
+    .markdown-content h5 + *,
+    .markdown-content h6 + * {
+      margin-top: 16px;
+    }
+
+    /* API Key section styles */
+    .api-key-section {
+      margin-bottom: 16px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .api-key-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: #f8f9fa;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .api-key-header:hover {
+      background: #f1f3f5;
+    }
+
+    .api-key-content {
+      padding: 12px;
+      border-top: 1px solid #ddd;
+    }
+
+    .api-key-content.collapsed {
+      display: none;
+    }
+
+    .api-key-toggle {
+      color: #666;
+      font-size: 12px;
+      padding: 4px 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: white;
+      cursor: pointer;
+    }
+
+    .api-key-toggle:hover {
+      background: #f1f3f5;
+    }
+
+    .api-key-status {
+      font-size: 12px;
+      color: #666;
+      margin-left: 8px;
+    }
+
+    .api-key-status.valid {
+      color: #27ae60;
+    }
+
+    /* Raw content section styles */
+    .raw-content-section {
+      margin-top: 20px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .raw-content-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: #f8f9fa;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .raw-content-header:hover {
+      background: #f1f3f5;
+    }
+
+    .raw-content-content {
+      padding: 16px;
+      border-top: 1px solid #ddd;
+      background: #fafafa;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .raw-content-content.collapsed {
+      display: none;
+    }
+
+    .raw-content-toggle {
+      color: #666;
+      font-size: 12px;
+      padding: 4px 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: white;
+      cursor: pointer;
+    }
+
+    .raw-content-toggle:hover {
+      background: #f1f3f5;
+    }
+
+    .raw-content-edit {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: white;
+    }
+
+    .raw-content-edit textarea {
+      width: 100%;
+      min-height: 200px;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      resize: vertical;
+    }
+
+    .raw-content-actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Content Critic</h1>
+    
+    <div class="api-key-section">
+      <div class="api-key-header" id="apiKeyHeader">
+        <div>
+          <span>API Key</span>
+          <span class="api-key-status" id="apiKeyStatus">Not configured</span>
+        </div>
+        <button class="api-key-toggle" id="apiKeyToggle">Show</button>
+      </div>
+      <div class="api-key-content collapsed" id="apiKeyContent">
+        <div class="input-group">
+          <label for="apiKey">Clé API (Claude ou OpenAI)</label>
+          <input type="text" id="apiKey" placeholder="sk-...">
+        </div>
+      </div>
+    </div>
+
+    <div class="raw-content-section" id="rawContentSection" style="display: none;">
+      <div class="raw-content-header" id="rawContentHeader">
+        <div>
+          <span>Raw Content</span>
+          <span class="raw-content-status" id="rawContentStatus"></span>
+        </div>
+        <button class="raw-content-toggle" id="rawContentToggle">Show</button>
+      </div>
+      <div class="raw-content-content collapsed" id="rawContentContent">
+        <div id="rawContentText"></div>
+        <div class="raw-content-edit" id="rawContentEdit" style="display: none;">
+          <textarea id="rawContentTextarea"></textarea>
+          <div class="raw-content-actions">
+            <button id="saveContentBtn">Save & Reanalyze</button>
+            <button id="cancelEditBtn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="pageInfo"></div>
+    <div id="contentPreview" style="display: none;"></div>
+    
+    <button id="analyzeBtn">Analyze</button>
+    <div id="result"></div>
+  </div>
+  <script src="simple-markdown.js"></script>
+  <script src="sidepanel_js.js"></script>
+</body>
+</html>
