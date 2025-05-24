@@ -2,8 +2,15 @@
 let contentType = 'generic';
 let currentTabId = null;
 
+// Token limits
+const MAX_TOKENS_REGULAR = 8000;
+const MAX_TOKENS_HACKERNEWS = 20000;
+
 // Raw content handling
 let currentRawContent = null;
+
+// Raw response handling
+let currentRawResponse = null;
 
 const CRITIC_PROMPT = `You are a relentless, insight-driven content challenger. Your role is to critically dissect any post, article, argument, or idea the user provides. You are not here to summarize, agree, or validate—instead, your purpose is to question, interrogate, and expose the underlying structure and weak points of the content.
 
@@ -22,7 +29,7 @@ Some ideas to think deeply about:
 Your response must be in JSON format with the following structure:
 {
   "analysis": {
-    "summary": "A 5-10 rows table summary highlighting core premise, risks, effects, and tradeoffs",
+    "summary": "A 5-10 rows table (Markdown format) summary highlighting core premise, risks, effects, and tradeoffs",
     "critique": "Your detailed analysis and critique in markdown format"
   },
   "highlights": [
@@ -64,33 +71,64 @@ function saveApiKey() {
   chrome.storage.local.set({ apiKey });
 }
 
+// Function to filter out our highlights from content
+function filterHighlights(content) {
+  if (!content) return '';
+  
+  // Remove any text that matches our highlight patterns
+  const highlightPatterns = [
+    /(?:Assumption|Fallacy|Contradiction|Inconsistency|Fluff)[\s\S]*?(?=Assumption|Fallacy|Contradiction|Inconsistency|Fluff|$)/gi,
+    /SUGGESTION[\s\S]*?(?=Assumption|Fallacy|Contradiction|Inconsistency|Fluff|SUGGESTION|$)/gi
+  ];
+  
+  let cleanContent = content;
+  highlightPatterns.forEach(pattern => {
+    cleanContent = cleanContent.replace(pattern, '');
+  });
+  
+  // Clean up any extra whitespace created by the removal
+  return cleanContent
+    .replace(/\n\s*\n\s*\n/g, '\n\n') // Replace multiple newlines with double newlines
+    .replace(/^\s+|\s+$/g, ''); // Trim whitespace
+}
+
 // Analyse le contenu avec l'API
 async function analyzeContent() {
-  const apiKey = document.getElementById('apiKey').value;
+  // Get API key from storage first, then fallback to input
+  const { apiKey: storedApiKey } = await chrome.storage.local.get(['apiKey']);
+  const inputApiKey = document.getElementById('apiKey').value;
+  const apiKey = storedApiKey || inputApiKey;
+  
   const resultDiv = document.getElementById('result');
   const analyzeBtn = document.getElementById('analyzeBtn');
   
   if (!apiKey) {
-    resultDiv.innerHTML = '<div class="result error">Veuillez entrer votre clé API</div>';
+    resultDiv.innerHTML = '<div class="result error">Please enter your API key</div>';
     return;
   }
 
   // Get current tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) {
-    resultDiv.innerHTML = '<div class="result error">Impossible de trouver l\'onglet actif</div>';
+    resultDiv.innerHTML = '<div class="result error">Unable to find active tab</div>';
     return;
   }
 
   currentTabId = tab.id;
   
-  // Sauvegarde la clé API
-  saveApiKey();
+  // Save the API key if it's from input
+  if (inputApiKey && inputApiKey !== storedApiKey) {
+    saveApiKey();
+  }
   
   // État de chargement
   analyzeBtn.disabled = true;
-  analyzeBtn.textContent = 'Analyse en cours...';
-  resultDiv.innerHTML = '<div class="loading">Analyse du contenu</div>';
+  analyzeBtn.textContent = 'Analyzing...';
+  resultDiv.innerHTML = `
+    <div class="loading">
+      <div class="spinner"></div>
+      <div>Analyzing content...</div>
+    </div>`;
   
   try {
     // Vérifie si le content script est injecté
@@ -106,13 +144,13 @@ async function analyzeContent() {
     // Récupère le contenu de la page active
     const response = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Timeout: Impossible de récupérer le contenu de la page'));
+        reject(new Error('Timeout: Unable to get page content'));
       }, 5000);
 
       chrome.tabs.sendMessage(tab.id, { action: "getContent" }, (response) => {
         clearTimeout(timeout);
         if (chrome.runtime.lastError) {
-          reject(new Error('Le content script n\'est pas prêt. Veuillez rafraîchir la page.'));
+          reject(new Error('Content script not ready. Please refresh the page.'));
           return;
         }
         resolve(response);
@@ -120,11 +158,16 @@ async function analyzeContent() {
     });
 
     if (!response || !response.content) {
-      throw new Error('Impossible de récupérer le contenu de la page');
+      throw new Error('Unable to get page content');
     }
 
-    // Show the raw content
-    showRawContent(response.content);
+    // Filter out our own highlights from the content
+    const cleanContent = filterHighlights(response.content);
+
+    // Store the clean raw content without showing the modal
+    currentRawContent = cleanContent;
+    const tokenInfo = document.getElementById('rawContentTokenInfo');
+    tokenInfo.textContent = computeTokenInfo(cleanContent).displayText;
 
     let apiResponse;
     let analysisResult;
@@ -135,8 +178,8 @@ async function analyzeContent() {
     
     // Choose prompt based on the URL
     const prompt = isHackerNews ? 
-      HACKERNEWS_PROMPT + '\n\n' + response.content :
-      CRITIC_PROMPT + '\n\n' + response.content;
+      HACKERNEWS_PROMPT + '\n\n' + cleanContent :
+      CRITIC_PROMPT + '\n\n' + cleanContent;
     
     console.log('Using prompt for:', isHackerNews ? 'HackerNews' : 'Generic content');
     
@@ -153,7 +196,7 @@ async function analyzeContent() {
         },
         body: JSON.stringify({
           model: 'claude-3-sonnet-20240229',
-          max_tokens: 4000,
+          max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
           messages: [{
             role: 'user',
             content: prompt
@@ -167,15 +210,26 @@ async function analyzeContent() {
         throw new Error(data.error.message);
       }
       
+      // Store the raw response
+      currentRawResponse = data.content[0].text;
+      
       if (isHackerNews) {
         // For HackerNews, use the raw text response
-        analysisResult = data.content[0].text;
+        analysisResult = currentRawResponse;
       } else {
         // For generic content, try to parse JSON
         try {
-          const result = JSON.parse(data.content[0].text);
-          analysisResult = result.analysis;
-          highlights = result.highlights;
+          const responseText = data.content[0].text;
+          // Try to find JSON in the response
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const result = JSON.parse(jsonMatch[0]);
+            analysisResult = result.analysis;
+            highlights = result.highlights;
+          } else {
+            // If no JSON found, use the raw text
+            analysisResult = responseText;
+          }
         } catch (e) {
           console.error('Failed to parse JSON response:', e);
           analysisResult = data.content[0].text; // Fallback to raw text
@@ -196,7 +250,7 @@ async function analyzeContent() {
             role: 'user',
             content: prompt
           }],
-          max_tokens: 4000,
+          max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
         })
       });
       
@@ -206,15 +260,26 @@ async function analyzeContent() {
         throw new Error(data.error.message);
       }
       
+      // Store the raw response
+      currentRawResponse = data.choices[0].message.content;
+      
       if (isHackerNews) {
         // For HackerNews, use the raw text response
-        analysisResult = data.choices[0].message.content;
+        analysisResult = currentRawResponse;
       } else {
         // For generic content, try to parse JSON
         try {
-          const result = JSON.parse(data.choices[0].message.content);
-          analysisResult = result.analysis;
-          highlights = result.highlights;
+          const responseText = data.choices[0].message.content;
+          // Try to find JSON in the response
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const result = JSON.parse(jsonMatch[0]);
+            analysisResult = result.analysis;
+            highlights = result.highlights;
+          } else {
+            // If no JSON found, use the raw text
+            analysisResult = responseText;
+          }
         } catch (e) {
           console.error('Failed to parse JSON response:', e);
           analysisResult = data.choices[0].message.content; // Fallback to raw text
@@ -225,11 +290,12 @@ async function analyzeContent() {
     // Store the analysis result for this tab
     const { tabResults = {} } = await chrome.storage.local.get('tabResults');
     tabResults[tab.id] = {
-      content: response.content,
+      content: cleanContent,
       title: response.title,
       url: response.url,
       analysis: analysisResult,
-      highlights: isHackerNews ? [] : highlights, // Only store highlights for non-HN content
+      rawResponse: currentRawResponse,
+      highlights: isHackerNews ? [] : highlights,
       timestamp: Date.now(),
       type: isHackerNews ? 'hackernews' : 'generic'
     };
@@ -247,7 +313,7 @@ async function analyzeContent() {
     displayResult(analysisResult, response.title);
     
   } catch (error) {
-    displayError('Erreur: ' + error.message);
+    displayError('Error: ' + error.message);
   } finally {
     analyzeBtn.disabled = false;
     analyzeBtn.textContent = 'Analyze';
@@ -256,16 +322,36 @@ async function analyzeContent() {
 
 function displayResult(text, title = '') {
   const resultDiv = document.getElementById('result');
+  if (!resultDiv) {
+    console.error('Result div not found');
+    return;
+  }
+
   try {
     let displayText;
     let htmlContent;
 
     // Handle both string and object responses
     if (typeof text === 'string') {
-      displayText = text;
+      // Pre-process markdown tables to ensure they're not split
+      displayText = text.replace(/\|\n\|/g, '|\n|'); // Fix split table rows
+      displayText = displayText.replace(/\n\s*\n\s*\|/g, '\n|'); // Remove extra newlines before table rows
+      displayText = displayText.replace(/\|\s*\n\s*\n/g, '|\n'); // Remove extra newlines after table rows
     } else if (text && typeof text === 'object') {
-      // Format the analysis object
-      displayText = `## Summary\n${text.summary}\n\n## Analysis\n${text.critique}`;
+      // Format the analysis object without the section titles
+      let summary = text.summary || '';
+      let critique = text.critique || '';
+      
+      // Fix tables in both summary and critique
+      summary = summary.replace(/\|\n\|/g, '|\n|')
+                      .replace(/\n\s*\n\s*\|/g, '\n|')
+                      .replace(/\|\s*\n\s*\n/g, '|\n');
+      critique = critique.replace(/\|\n\|/g, '|\n|')
+                        .replace(/\n\s*\n\s*\|/g, '\n|')
+                        .replace(/\|\s*\n\s*\n/g, '|\n');
+      
+      // Just combine the content without the section titles
+      displayText = `${summary}\n\n${critique}`;
     } else {
       displayText = 'Invalid analysis format';
     }
@@ -279,8 +365,11 @@ function displayResult(text, title = '') {
         ${titleHtml}
         <div class="markdown-content">${htmlContent}</div>
       </div>`;
+    
+    // Scroll to top of result
+    resultDiv.scrollTop = 0;
   } catch (error) {
-    console.error('Error parsing markdown:', error);
+    console.error('Error displaying result:', error);
     const titleHtml = title ? `<div class="article-title">Analyzing: ${title}</div>` : '';
     resultDiv.innerHTML = `
       <div class="result">
@@ -296,64 +385,261 @@ function displayError(error) {
 }
 
 // Event listeners
-document.getElementById('analyzeBtn').addEventListener('click', analyzeContent);
-document.getElementById('apiKey').addEventListener('change', saveApiKey);
+document.addEventListener('DOMContentLoaded', () => {
+  // API Key Modal handling
+  document.getElementById('apiKeyBtn').addEventListener('click', () => {
+    const modal = document.getElementById('apiKeyModal');
+    modal.classList.add('visible');
+    // Load current API key if exists
+    chrome.storage.local.get(['apiKey'], (result) => {
+      if (result.apiKey) {
+        document.getElementById('apiKey').value = result.apiKey;
+        updateApiKeyStatus(result.apiKey);
+      }
+    });
+  });
+
+  document.getElementById('closeApiKeyBtn').addEventListener('click', () => {
+    document.getElementById('apiKeyModal').classList.remove('visible');
+  });
+
+  document.getElementById('saveApiKeyBtn').addEventListener('click', () => {
+    saveApiKey();
+    document.getElementById('apiKeyModal').classList.remove('visible');
+  });
+
+  // Raw Content Modal handling
+  document.getElementById('rawContentBtn').addEventListener('click', () => {
+    const modal = document.getElementById('rawContentModal');
+    const textDiv = document.getElementById('rawContentText');
+    const editDiv = document.getElementById('rawContentEdit');
+    
+    // Make sure we have content to show
+    if (currentRawContent) {
+      // Update token info
+      const tokenInfo = document.getElementById('rawContentTokenInfo');
+      tokenInfo.textContent = computeTokenInfo(currentRawContent).displayText;
+      
+      // Set content and show text div
+      textDiv.textContent = currentRawContent;
+      textDiv.style.display = 'block';
+      editDiv.style.display = 'none';
+      
+      // Hide edit buttons
+      document.getElementById('saveContentBtn').style.display = 'none';
+      document.getElementById('cancelEditBtn').style.display = 'none';
+    } else {
+      textDiv.textContent = 'No content available';
+    }
+    
+    modal.classList.add('visible');
+  });
+
+  document.getElementById('closeRawContentBtn').addEventListener('click', () => {
+    document.getElementById('rawContentModal').classList.remove('visible');
+  });
+
+  // Raw Response Modal handling
+  document.getElementById('rawResponseBtn').addEventListener('click', () => {
+    const modal = document.getElementById('rawResponseModal');
+    const textDiv = document.getElementById('rawResponseText');
+    
+    if (currentRawResponse) {
+      textDiv.textContent = currentRawResponse;
+      const tokenInfo = document.getElementById('rawResponseTokenInfo');
+      tokenInfo.textContent = computeTokenInfo(currentRawResponse).displayText;
+    } else {
+      textDiv.textContent = 'No raw response available. Please run an analysis first.';
+    }
+    
+    modal.classList.add('visible');
+  });
+
+  document.getElementById('closeRawResponseBtn').addEventListener('click', () => {
+    document.getElementById('rawResponseModal').classList.remove('visible');
+  });
+
+  // Analyze button
+  document.getElementById('analyzeBtn').addEventListener('click', analyzeContent);
+
+  // API Key input handling
+  document.getElementById('apiKey').addEventListener('input', (e) => {
+    updateApiKeyStatus(e.target.value);
+  });
+
+  // Raw content edit handling
+  document.getElementById('rawContentText').addEventListener('dblclick', () => {
+    const textDiv = document.getElementById('rawContentText');
+    const editDiv = document.getElementById('rawContentEdit');
+    const textarea = document.getElementById('rawContentTextarea');
+    const saveBtn = document.getElementById('saveContentBtn');
+    const cancelBtn = document.getElementById('cancelEditBtn');
+    
+    textarea.value = currentRawContent;
+    textDiv.style.display = 'none';
+    editDiv.style.display = 'block';
+    saveBtn.style.display = 'block';
+    cancelBtn.style.display = 'block';
+    textarea.focus();
+  });
+
+  // Save content handling
+  document.getElementById('saveContentBtn').addEventListener('click', async () => {
+    const textarea = document.getElementById('rawContentTextarea');
+    const newContent = textarea.value.trim();
+    
+    if (newContent) {
+      currentRawContent = newContent;
+      document.getElementById('rawContentText').textContent = newContent;
+      document.getElementById('rawContentEdit').style.display = 'none';
+      document.getElementById('rawContentText').style.display = 'block';
+      document.getElementById('saveContentBtn').style.display = 'none';
+      document.getElementById('cancelEditBtn').style.display = 'none';
+      
+      // Reanalyze with new content
+      const analyzeBtn = document.getElementById('analyzeBtn');
+      analyzeBtn.disabled = true;
+      analyzeBtn.textContent = 'Reanalyzing...';
+      
+      try {
+        const apiKey = document.getElementById('apiKey').value;
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        
+        if (!tab) {
+          throw new Error('No active tab found');
+        }
+        
+        // Choose prompt based on the URL
+        const isHackerNews = tab.url.includes('news.ycombinator.com');
+        const prompt = isHackerNews ? 
+          HACKERNEWS_PROMPT + '\n\n' + newContent :
+          CRITIC_PROMPT + '\n\n' + newContent;
+        
+        let analysisResult;
+        
+        if (apiKey.startsWith('sk-ant-')) {
+          // Claude API
+          const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true'
+            },
+            body: JSON.stringify({
+              model: 'claude-3-sonnet-20240229',
+              max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
+              messages: [{
+                role: 'user',
+                content: prompt
+              }]
+            })
+          });
+          
+          const data = await apiResponse.json();
+          if (data.error) throw new Error(data.error.message);
+          analysisResult = data.content[0].text;
+          
+        } else if (apiKey.startsWith('sk-')) {
+          // OpenAI API
+          const apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+              model: 'gpt-4.1',
+              messages: [{
+                role: 'user',
+                content: prompt
+              }],
+              max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
+            })
+          });
+          
+          const data = await apiResponse.json();
+          if (data.error) throw new Error(data.error.message);
+          analysisResult = data.choices[0].message.content;
+        }
+        
+        // Store the analysis result
+        const { tabResults = {} } = await chrome.storage.local.get('tabResults');
+        tabResults[tab.id] = {
+          content: newContent,
+          title: tab.title,
+          url: tab.url,
+          analysis: analysisResult,
+          rawResponse: currentRawResponse,
+          timestamp: Date.now(),
+          type: isHackerNews ? 'hackernews' : 'generic'
+        };
+        await chrome.storage.local.set({ tabResults });
+        
+        displayResult(analysisResult, tab.title);
+        
+      } catch (error) {
+        displayError('Error reanalyzing: ' + error.message);
+      } finally {
+        analyzeBtn.disabled = false;
+        analyzeBtn.textContent = 'Analyze';
+      }
+    }
+  });
+
+  // Cancel edit handling
+  document.getElementById('cancelEditBtn').addEventListener('click', () => {
+    document.getElementById('rawContentEdit').style.display = 'none';
+    document.getElementById('rawContentText').style.display = 'block';
+    document.getElementById('saveContentBtn').style.display = 'none';
+    document.getElementById('cancelEditBtn').style.display = 'none';
+  });
+
+  // Close modals when clicking outside
+  window.addEventListener('click', (e) => {
+    const apiKeyModal = document.getElementById('apiKeyModal');
+    const rawContentModal = document.getElementById('rawContentModal');
+    const rawResponseModal = document.getElementById('rawResponseModal');
+    
+    if (e.target === apiKeyModal) {
+      apiKeyModal.classList.remove('visible');
+    }
+    if (e.target === rawContentModal) {
+      rawContentModal.classList.remove('visible');
+    }
+    if (e.target === rawResponseModal) {
+      rawResponseModal.classList.remove('visible');
+    }
+  });
+
+  // Initialize the extension
+  initializeExtension();
+});
 
 // API Key section handling
 function updateApiKeyStatus(apiKey) {
   const statusElement = document.getElementById('apiKeyStatus');
-  const toggleButton = document.getElementById('apiKeyToggle');
   
   if (apiKey) {
     // Validate API key format
     const isValid = apiKey.startsWith('sk-') || apiKey.startsWith('sk-ant-');
     statusElement.textContent = isValid ? 'Configured' : 'Invalid format';
     statusElement.className = `api-key-status ${isValid ? 'valid' : ''}`;
-    
-    // Show the toggle button and collapse the content by default
-    toggleButton.style.display = 'block';
-    document.getElementById('apiKeyContent').classList.add('collapsed');
-    toggleButton.textContent = 'Show';
   } else {
     statusElement.textContent = 'Not configured';
     statusElement.className = 'api-key-status';
-    toggleButton.style.display = 'none';
-    document.getElementById('apiKeyContent').classList.remove('collapsed');
   }
 }
-
-// Toggle API key section
-document.getElementById('apiKeyHeader').addEventListener('click', (e) => {
-  // Don't toggle if clicking the input
-  if (e.target.tagName === 'INPUT') return;
-  
-  const content = document.getElementById('apiKeyContent');
-  const toggleButton = document.getElementById('apiKeyToggle');
-  
-  content.classList.toggle('collapsed');
-  toggleButton.textContent = content.classList.contains('collapsed') ? 'Show' : 'Hide';
-});
-
-// Update API key status when input changes
-document.getElementById('apiKey').addEventListener('input', (e) => {
-  updateApiKeyStatus(e.target.value);
-});
-
-// Load API key and update status on startup
-chrome.storage.local.get(['apiKey'], (result) => {
-  if (result.apiKey) {
-    document.getElementById('apiKey').value = result.apiKey;
-    updateApiKeyStatus(result.apiKey);
-  } else {
-    updateApiKeyStatus(null);
-  }
-});
 
 // Listen for tab changes and update the panel
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   console.log('Tab activated:', activeInfo);
   try {
+    // Update current tab ID
     currentTabId = activeInfo.tabId;
+    
+    // Get the tab info
     const tab = await chrome.tabs.get(activeInfo.tabId);
     console.log('Current tab info:', tab);
     
@@ -363,9 +649,12 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
       return;
     }
     
+    // Clear current result and load stored analysis
+    document.getElementById('result').innerHTML = '';
     await loadStoredAnalysis(activeInfo.tabId);
   } catch (error) {
     console.error('Error handling tab activation:', error);
+    document.getElementById('result').innerHTML = '';
   }
 });
 
@@ -387,11 +676,48 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       await loadStoredAnalysis(tabId);
     } catch (error) {
       console.error('Error handling tab update:', error);
+      document.getElementById('result').innerHTML = '';
     }
   }
 });
 
-// Modify loadStoredAnalysis to handle URL changes
+// Compute token info for content
+function computeTokenInfo(content) {
+  const charCount = content.length;
+  const wordCount = content.trim().split(/\s+/).length;
+  const estimatedTokens = Math.ceil(charCount / 4); // Rough estimate: ~4 chars per token
+  return {
+    charCount,
+    wordCount,
+    estimatedTokens,
+    displayText: `≈ ${estimatedTokens.toLocaleString()} tokens (${wordCount.toLocaleString()} words, ${charCount.toLocaleString()} chars)`
+  };
+}
+
+// Update showRawContent function to just store content
+function showRawContent(content) {
+  // Store content and update token info
+  currentRawContent = filterHighlights(content);
+  const tokenInfo = document.getElementById('rawContentTokenInfo');
+  tokenInfo.textContent = computeTokenInfo(currentRawContent).displayText;
+  
+  // Show the modal with content
+  const modal = document.getElementById('rawContentModal');
+  const textDiv = document.getElementById('rawContentText');
+  const editDiv = document.getElementById('rawContentEdit');
+  
+  textDiv.textContent = currentRawContent;
+  textDiv.style.display = 'block';
+  editDiv.style.display = 'none';
+  
+  // Hide edit buttons
+  document.getElementById('saveContentBtn').style.display = 'none';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  
+  modal.classList.add('visible');
+}
+
+// Modify loadStoredAnalysis to use computeTokenInfo
 async function loadStoredAnalysis(tabId) {
   if (!tabId) {
     console.log('No tabId provided to loadStoredAnalysis');
@@ -426,13 +752,18 @@ async function loadStoredAnalysis(tabId) {
       hasAnalysis: !!tabData?.analysis 
     });
     
-    // Only show stored analysis if the URL matches
-    if (tabData && tabData.analysis && tabData.url === tab.url) {
+    // Only show stored analysis if the URL matches and we have analysis data
+    if (tabData?.analysis && tabData?.url === tab.url) {
       console.log('Displaying stored analysis for URL:', tab.url);
       displayResult(tabData.analysis, tabData.title);
-      // Show the stored raw content
+      // Store the raw content and response
       if (tabData.content) {
-        showRawContent(tabData.content);
+        currentRawContent = filterHighlights(tabData.content);
+        const tokenInfo = document.getElementById('rawContentTokenInfo');
+        tokenInfo.textContent = computeTokenInfo(currentRawContent).displayText;
+      }
+      if (tabData.rawResponse) {
+        currentRawResponse = tabData.rawResponse;
       }
     } else {
       console.log('No matching analysis found:', {
@@ -441,10 +772,12 @@ async function loadStoredAnalysis(tabId) {
         urlMatch: tabData?.url === tab.url
       });
       document.getElementById('result').innerHTML = '';
+      currentRawContent = null;
     }
   } catch (error) {
     console.error('Error loading stored analysis:', error);
     document.getElementById('result').innerHTML = '';
+    currentRawContent = null;
   }
 }
 
@@ -515,6 +848,13 @@ async function initializeExtension() {
     // Clean up old results when the extension starts
     await cleanupOldTabResults();
     
+    // Load API key from storage
+    const { apiKey } = await chrome.storage.local.get(['apiKey']);
+    if (apiKey) {
+      document.getElementById('apiKey').value = apiKey;
+      updateApiKeyStatus(apiKey);
+    }
+    
     // Get the current active tab
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const tab = tabs[0];
@@ -532,184 +872,3 @@ async function initializeExtension() {
 
 // Replace the separate initialization calls with our new function
 initializeExtension();
-
-function showRawContent(content) {
-  const section = document.getElementById('rawContentSection');
-  const textDiv = document.getElementById('rawContentText');
-  const editDiv = document.getElementById('rawContentEdit');
-  const toggleBtn = document.getElementById('rawContentToggle');
-  
-  // Estimate token count (rough approximation)
-  const charCount = content.length;
-  const wordCount = content.trim().split(/\s+/).length;
-  const estimatedTokens = Math.ceil(charCount / 4); // Rough estimate: ~4 chars per token
-  
-  // Add token info to the header
-  const header = document.getElementById('rawContentHeader');
-  const tokenInfo = document.createElement('div');
-  tokenInfo.style.cssText = `
-    font-size: 12px;
-    color: #666;
-    margin-top: 4px;
-    font-family: monospace;
-  `;
-  tokenInfo.textContent = `≈ ${estimatedTokens.toLocaleString()} tokens (${wordCount.toLocaleString()} words, ${charCount.toLocaleString()} chars)`;
-  
-  // Remove any existing token info
-  const existingInfo = header.querySelector('.token-info');
-  if (existingInfo) {
-    existingInfo.remove();
-  }
-  
-  tokenInfo.className = 'token-info';
-  header.appendChild(tokenInfo);
-  
-  currentRawContent = content;
-  textDiv.textContent = content;
-  section.style.display = 'block';
-  editDiv.style.display = 'none';
-  toggleBtn.textContent = 'Show';
-  document.getElementById('rawContentContent').classList.add('collapsed');
-}
-
-// Toggle raw content section
-document.getElementById('rawContentToggle').addEventListener('click', (e) => {
-  e.stopPropagation(); // Prevent event from bubbling up
-  const content = document.getElementById('rawContentContent');
-  const toggleBtn = e.target;
-  
-  content.classList.toggle('collapsed');
-  toggleBtn.textContent = content.classList.contains('collapsed') ? 'Show' : 'Hide';
-});
-
-// Handle header click separately
-document.getElementById('rawContentHeader').addEventListener('click', (e) => {
-  // Don't toggle if clicking the button (it has its own handler)
-  if (e.target.tagName === 'BUTTON') return;
-  
-  const content = document.getElementById('rawContentContent');
-  const toggleBtn = document.getElementById('rawContentToggle');
-  
-  content.classList.toggle('collapsed');
-  toggleBtn.textContent = content.classList.contains('collapsed') ? 'Show' : 'Hide';
-});
-
-// Edit raw content
-document.getElementById('rawContentText').addEventListener('dblclick', () => {
-  const textDiv = document.getElementById('rawContentText');
-  const editDiv = document.getElementById('rawContentEdit');
-  const textarea = document.getElementById('rawContentTextarea');
-  
-  textarea.value = currentRawContent;
-  textDiv.style.display = 'none';
-  editDiv.style.display = 'block';
-  textarea.focus();
-});
-
-// Save edited content
-document.getElementById('saveContentBtn').addEventListener('click', async () => {
-  const textarea = document.getElementById('rawContentTextarea');
-  const newContent = textarea.value.trim();
-  
-  if (newContent) {
-    currentRawContent = newContent;
-    document.getElementById('rawContentText').textContent = newContent;
-    document.getElementById('rawContentEdit').style.display = 'none';
-    document.getElementById('rawContentText').style.display = 'block';
-    
-    // Reanalyze with new content
-    const analyzeBtn = document.getElementById('analyzeBtn');
-    analyzeBtn.disabled = true;
-    analyzeBtn.textContent = 'Reanalyzing...';
-    
-    try {
-      const apiKey = document.getElementById('apiKey').value;
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      if (!tab) {
-        throw new Error('No active tab found');
-      }
-      
-      // Choose prompt based on the URL
-      const isHackerNews = tab.url.includes('news.ycombinator.com');
-      const prompt = isHackerNews ? 
-        HACKERNEWS_PROMPT + '\n\n' + newContent :
-        CRITIC_PROMPT + '\n\n' + newContent;
-      
-      let analysisResult;
-      
-      if (apiKey.startsWith('sk-ant-')) {
-        // Claude API
-        const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true'
-          },
-          body: JSON.stringify({
-            model: 'claude-3-sonnet-20240229',
-            max_tokens: 4000,
-            messages: [{
-              role: 'user',
-              content: prompt
-            }]
-          })
-        });
-        
-        const data = await apiResponse.json();
-        if (data.error) throw new Error(data.error.message);
-        analysisResult = data.content[0].text;
-        
-      } else if (apiKey.startsWith('sk-')) {
-        // OpenAI API
-        const apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: 'gpt-4.1',
-            messages: [{
-              role: 'user',
-              content: prompt
-            }],
-            max_tokens: 4000,
-          })
-        });
-        
-        const data = await apiResponse.json();
-        if (data.error) throw new Error(data.error.message);
-        analysisResult = data.choices[0].message.content;
-      }
-      
-      // Store the analysis result
-      const { tabResults = {} } = await chrome.storage.local.get('tabResults');
-      tabResults[tab.id] = {
-        content: newContent,
-        title: tab.title,
-        url: tab.url,
-        analysis: analysisResult,
-        timestamp: Date.now(),
-        type: isHackerNews ? 'hackernews' : 'generic'
-      };
-      await chrome.storage.local.set({ tabResults });
-      
-      displayResult(analysisResult, tab.title);
-      
-    } catch (error) {
-      displayError('Error reanalyzing: ' + error.message);
-    } finally {
-      analyzeBtn.disabled = false;
-      analyzeBtn.textContent = 'Analyze';
-    }
-  }
-});
-
-// Cancel editing
-document.getElementById('cancelEditBtn').addEventListener('click', () => {
-  document.getElementById('rawContentEdit').style.display = 'none';
-  document.getElementById('rawContentText').style.display = 'block';
-});

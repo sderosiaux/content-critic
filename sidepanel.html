@@ -5,445 +5,462 @@
   <title>Content Critic</title>
   <style>
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       margin: 0;
       padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
       color: #333;
-      background: #f5f5f5;
-      min-width: 100%;
-      box-sizing: border-box;
+      background: #fff;
     }
 
-    .container {
-      width: 100%;
-      margin: 0;
+    .header {
+      position: sticky;
+      top: 0;
+      background: #fff;
+      border-bottom: 1px solid #eee;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 100;
+    }
+
+    .header-left {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .header-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .header-button {
+      padding: 6px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #fff;
+      color: #666;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .header-button:hover {
+      background: #f5f5f5;
+      border-color: #ccc;
+    }
+
+    .header-button.primary {
+      background: #007AFF;
+      color: white;
+      border-color: #007AFF;
+    }
+
+    .header-button.primary:hover {
+      background: #0066CC;
+      border-color: #0066CC;
+    }
+
+    .header-button svg {
+      width: 14px;
+      height: 14px;
+      opacity: 0.8;
+    }
+
+    .api-key-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .api-key-modal.visible {
+      display: flex;
+    }
+
+    .api-key-content {
       background: white;
       padding: 20px;
-      box-sizing: border-box;
-      min-height: 100vh;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 400px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     }
 
-    /* When side panel is expanded */
-    @media (min-width: 600px) {
-      .container {
-        padding: 24px 32px;
-      }
-    }
-
-    /* When side panel is collapsed */
-    @media (max-width: 599px) {
-      .container {
-        padding: 16px;
-      }
-    }
-
-    h1 {
-      color: #2c3e50;
-      margin-bottom: 20px;
-      font-size: 24px;
-    }
-
-    .input-group {
+    .api-key-header {
       margin-bottom: 16px;
+      font-weight: 600;
     }
 
-    label {
-      display: block;
-      margin-bottom: 8px;
-      color: #666;
-    }
-
-    input[type="text"] {
+    .api-key-input {
       width: 100%;
       padding: 8px;
       border: 1px solid #ddd;
       border-radius: 4px;
-      font-size: 14px;
-    }
-
-    button {
-      background: #3498db;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-      transition: background 0.3s;
-    }
-
-    button:hover {
-      background: #2980b9;
-    }
-
-    button:disabled {
-      background: #95a5a6;
-      cursor: not-allowed;
-    }
-
-    .result {
-      margin-top: 20px;
-      padding: 16px;
-      border-radius: 4px;
-      background: #f8f9fa;
-    }
-
-    .error {
-      color: #e74c3c;
-      background: #fdf3f2;
-    }
-
-    .loading {
-      color: #666;
-      font-style: italic;
-    }
-
-    #contentPreview {
-      margin: 16px 0;
-      padding: 12px;
-      background: #f8f9fa;
-      border-radius: 4px;
-      font-size: 14px;
-      color: #666;
-    }
-
-    /* Styles pour le contenu markdown */
-    .markdown-content {
-      line-height: 1.6;
-      font-size: 16px;
-    }
-
-    .article-title {
-      font-size: 20px;
-      font-weight: 600;
-      color: #2c3e50;
-      margin-bottom: 24px;
-      padding-bottom: 12px;
-      border-bottom: 2px solid #3498db;
-    }
-
-    .markdown-content h1,
-    .markdown-content h2,
-    .markdown-content h3,
-    .markdown-content h4,
-    .markdown-content h5,
-    .markdown-content h6 {
-      margin-top: 28px;
-      margin-bottom: 20px;
-      font-weight: 600;
-      line-height: 1.3;
-      color: #2c3e50;
-      padding-bottom: 8px;
-      border-bottom: 1px solid #eee;
-    }
-
-    .markdown-content h1 { 
-      font-size: 2.4em;
-      color: #1a365d;
-      border-bottom: 2px solid #3498db;
-      padding-bottom: 12px;
-    }
-    
-    .markdown-content h2 { 
-      font-size: 2em;
-      color: #2c5282;
-      border-bottom: 1px solid #3498db;
-    }
-    
-    .markdown-content h3 { 
-      font-size: 1.6em;
-      color: #2c3e50;
-    }
-    
-    .markdown-content h4 { 
-      font-size: 1.4em;
-      color: #2c3e50;
-    }
-    
-    .markdown-content h5 { 
-      font-size: 1.2em;
-      color: #2c3e50;
-    }
-    
-    .markdown-content h6 { 
-      font-size: 1.1em;
-      color: #2c3e50;
-      font-style: italic;
-    }
-
-    .markdown-content p {
       margin-bottom: 12px;
-      font-size: 16px;
+      font-family: monospace;
     }
 
-    .markdown-content ul,
-    .markdown-content ol {
-      margin-bottom: 12px;
-      padding-left: 2em;
-      font-size: 16px;
-    }
-
-    .markdown-content li {
-      margin-bottom: 8px;
-    }
-
-    .markdown-content code {
-      background: #f1f1f1;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-      font-size: 0.95em;
-    }
-
-    .markdown-content pre {
-      background: #f1f1f1;
-      padding: 20px;
-      border-radius: 4px;
-      overflow-x: auto;
-      margin-bottom: 20px;
-      font-size: 15px;
-    }
-
-    .markdown-content pre code {
-      background: none;
-      padding: 0;
-      font-size: 15px;
-    }
-
-    .markdown-content blockquote {
-      margin: 20px 0;
-      padding: 0 20px;
-      color: #666;
-      border-left: 4px solid #ddd;
-      font-size: 16px;
-    }
-
-    .markdown-content hr {
-      margin: 28px 0;
-      border: none;
-      border-top: 1px solid #ddd;
-    }
-
-    .markdown-content a {
-      color: #3498db;
-      text-decoration: none;
-      font-size: 16px;
-    }
-
-    .markdown-content a:hover {
-      text-decoration: underline;
-    }
-
-    .markdown-content table {
-      border-collapse: collapse;
-      width: 100%;
-      margin-bottom: 20px;
-      font-size: 16px;
-    }
-
-    .markdown-content th,
-    .markdown-content td {
-      padding: 12px;
-      border: 1px solid #ddd;
-    }
-
-    .markdown-content th {
-      background: #f8f9fa;
-      font-weight: 600;
-      font-size: 16px;
-    }
-
-    /* Add spacing after headers */
-    .markdown-content h1 + *,
-    .markdown-content h2 + *,
-    .markdown-content h3 + *,
-    .markdown-content h4 + *,
-    .markdown-content h5 + *,
-    .markdown-content h6 + * {
-      margin-top: 16px;
-    }
-
-    /* API Key section styles */
-    .api-key-section {
-      margin-bottom: 16px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      overflow: hidden;
-    }
-
-    .api-key-header {
+    .api-key-actions {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 12px;
-      background: #f8f9fa;
-      cursor: pointer;
-      user-select: none;
+      justify-content: flex-end;
+      gap: 8px;
     }
 
-    .api-key-header:hover {
-      background: #f1f3f5;
-    }
-
-    .api-key-content {
-      padding: 12px;
-      border-top: 1px solid #ddd;
-    }
-
-    .api-key-content.collapsed {
+    .raw-content-modal {
       display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
     }
 
-    .api-key-toggle {
-      color: #666;
-      font-size: 12px;
-      padding: 4px 8px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
+    .raw-content-modal.visible {
+      display: flex;
+    }
+
+    .raw-content-content {
       background: white;
-      cursor: pointer;
-    }
-
-    .api-key-toggle:hover {
-      background: #f1f3f5;
-    }
-
-    .api-key-status {
-      font-size: 12px;
-      color: #666;
-      margin-left: 8px;
-    }
-
-    .api-key-status.valid {
-      color: #27ae60;
-    }
-
-    /* Raw content section styles */
-    .raw-content-section {
-      margin-top: 20px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      overflow: hidden;
+      padding: 20px;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 800px;
+      max-height: 80vh;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      display: flex;
+      flex-direction: column;
     }
 
     .raw-content-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 8px 12px;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .raw-content-title {
+      font-weight: 600;
+    }
+
+    .raw-content-body {
+      flex: 1;
+      overflow: auto;
       background: #f8f9fa;
-      cursor: pointer;
-      user-select: none;
-    }
-
-    .raw-content-header:hover {
-      background: #f1f3f5;
-    }
-
-    .raw-content-content {
-      padding: 16px;
-      border-top: 1px solid #ddd;
-      background: #fafafa;
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-      font-size: 14px;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 13px;
       line-height: 1.5;
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: 500px;
-      overflow-y: auto;
-    }
-
-    .raw-content-content.collapsed {
-      display: none;
-    }
-
-    .raw-content-toggle {
-      color: #666;
-      font-size: 12px;
-      padding: 4px 8px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      background: white;
-      cursor: pointer;
-    }
-
-    .raw-content-toggle:hover {
-      background: #f1f3f5;
-    }
-
-    .raw-content-edit {
-      margin-top: 12px;
-      padding: 12px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      background: white;
-    }
-
-    .raw-content-edit textarea {
-      width: 100%;
-      min-height: 200px;
-      padding: 8px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-      font-size: 14px;
-      line-height: 1.5;
-      resize: vertical;
     }
 
     .raw-content-actions {
-      margin-top: 8px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #eee;
+    }
+
+    #result {
+      padding: 16px;
+    }
+
+    .result {
+      background: #fff;
+      border-radius: 4px;
+    }
+
+    .result.error {
+      color: #dc3545;
+      padding: 12px;
+      background: #f8d7da;
+      border: 1px solid #f5c6cb;
+      border-radius: 4px;
+    }
+
+    .loading {
+      padding: 12px;
+      text-align: center;
+      color: #666;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #007AFF;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .article-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .markdown-content {
+      line-height: 1.6;
+    }
+
+    .markdown-content h1,
+    .markdown-content h2,
+    .markdown-content h3,
+    .markdown-content h4 {
+      margin: 1.5em 0 0.5em;
+      line-height: 1.3;
+      color: #1a1a1a;
+    }
+
+    .markdown-content h1 { 
+      font-size: 1.5em; 
+      font-weight: 700;
+      border-bottom: 2px solid #eee;
+      padding-bottom: 0.3em;
+    }
+
+    .markdown-content h2 { 
+      font-size: 1.3em; 
+      font-weight: 600;
+      color: #007AFF;
+      margin-top: 1.8em;
+      padding-bottom: 0.2em;
+      border-bottom: 1px solid #eee;
+    }
+
+    .markdown-content h3 { 
+      font-size: 1.2em; 
+      font-weight: 600;
+      color: #2E7D32;
+      margin-top: 1.5em;
+      margin-bottom: 0.8em;
+      padding: 0.3em 0;
+    }
+
+    .markdown-content h4 { 
+      font-size: 1.1em; 
+      font-weight: 600;
+      color: #666;
+    }
+
+    .markdown-content p {
+      margin: 0 0 0;
+    }
+
+    .markdown-content ul,
+    .markdown-content ol {
+      margin: 0 0 1em;
+      padding-left: 2em;
+    }
+
+    .markdown-content li {
+      margin: 0.15em 0;
+    }
+
+    .markdown-content code {
+      background: #f8f9fa;
+      padding: 0.2em 0.4em;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 0.9em;
+    }
+
+    .markdown-content pre {
+      background: #f8f9fa;
+      padding: 1em;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 1em 0;
+    }
+
+    .markdown-content pre code {
+      background: none;
+      padding: 0;
+    }
+
+    .markdown-content blockquote {
+      margin: 1em 0;
+      padding: 0.5em 1em;
+      border-left: 4px solid #ddd;
+      color: #666;
+    }
+
+    .markdown-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1em 0;
+    }
+
+    .markdown-content th,
+    .markdown-content td {
+      border: 1px solid #ddd;
+      padding: 0.5em;
+      text-align: left;
+    }
+
+    .markdown-content th {
+      background: #f8f9fa;
+      font-weight: 600;
+    }
+
+    .api-key-status {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+
+    .api-key-status.valid {
+      color: #28a745;
+    }
+
+    .button-container {
       display: flex;
       gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .primary-button {
+      background-color: #007AFF;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .secondary-button {
+      background-color: #f5f5f5;
+      color: #333;
+      border: 1px solid #ddd;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .primary-button:hover {
+      background-color: #0056b3;
+    }
+
+    .secondary-button:hover {
+      background-color: #e5e5e5;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Content Critic</h1>
-    
-    <div class="api-key-section">
-      <div class="api-key-header" id="apiKeyHeader">
-        <div>
-          <span>API Key</span>
-          <span class="api-key-status" id="apiKeyStatus">Not configured</span>
-        </div>
-        <button class="api-key-toggle" id="apiKeyToggle">Show</button>
-      </div>
-      <div class="api-key-content collapsed" id="apiKeyContent">
-        <div class="input-group">
-          <label for="apiKey">Clé API (Claude ou OpenAI)</label>
-          <input type="text" id="apiKey" placeholder="sk-...">
-        </div>
-      </div>
+  <div class="header">
+    <div class="header-left">Content Critic</div>
+    <div class="header-right">
+      <button id="apiKeyBtn" class="header-button" title="API Key">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M15 7h3a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-3m-6 0H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3m0 0V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2M9 7h6"/>
+        </svg>
+        API Key
+      </button>
+      <button id="rawContentBtn" class="header-button" title="Raw Content">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
+        </svg>
+        Raw Content
+      </button>
+      <button id="rawResponseBtn" class="header-button" title="Raw Response">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
+        </svg>
+        Raw Response
+      </button>
+      <button id="analyzeBtn" class="header-button primary" title="Analyze Content">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        Analyze
+      </button>
     </div>
-
-    <div class="raw-content-section" id="rawContentSection" style="display: none;">
-      <div class="raw-content-header" id="rawContentHeader">
-        <div>
-          <span>Raw Content</span>
-          <span class="raw-content-status" id="rawContentStatus"></span>
-        </div>
-        <button class="raw-content-toggle" id="rawContentToggle">Show</button>
-      </div>
-      <div class="raw-content-content collapsed" id="rawContentContent">
-        <div id="rawContentText"></div>
-        <div class="raw-content-edit" id="rawContentEdit" style="display: none;">
-          <textarea id="rawContentTextarea"></textarea>
-          <div class="raw-content-actions">
-            <button id="saveContentBtn">Save & Reanalyze</button>
-            <button id="cancelEditBtn">Cancel</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="pageInfo"></div>
-    <div id="contentPreview" style="display: none;"></div>
-    
-    <button id="analyzeBtn">Analyze</button>
-    <div id="result"></div>
   </div>
+
+  <div id="result"></div>
+
+  <!-- API Key Modal -->
+  <div id="apiKeyModal" class="api-key-modal">
+    <div class="api-key-content">
+      <div class="api-key-header">API Key Configuration</div>
+      <input type="password" id="apiKey" class="api-key-input" placeholder="Enter your API key">
+      <div id="apiKeyStatus" class="api-key-status">Not configured</div>
+      <div class="api-key-actions">
+        <button id="saveApiKeyBtn" class="header-button primary">Save</button>
+        <button id="closeApiKeyBtn" class="header-button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Raw Content Modal -->
+  <div id="rawContentModal" class="raw-content-modal">
+    <div class="raw-content-content">
+      <div class="raw-content-header">
+        <div class="raw-content-title">Raw Content</div>
+        <div id="rawContentTokenInfo" class="token-info"></div>
+      </div>
+      <div id="rawContentText" class="raw-content-body"></div>
+      <div id="rawContentEdit" class="raw-content-body" style="display: none;">
+        <textarea id="rawContentTextarea" style="width: 100%; height: 100%; min-height: 200px; border: none; resize: vertical; font-family: monospace; font-size: 13px; line-height: 1.5;"></textarea>
+      </div>
+      <div class="raw-content-actions">
+        <button id="saveContentBtn" class="header-button primary" style="display: none;">Save & Reanalyze</button>
+        <button id="cancelEditBtn" class="header-button" style="display: none;">Cancel</button>
+        <button id="closeRawContentBtn" class="header-button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Raw Response Modal -->
+  <div id="rawResponseModal" class="raw-content-modal">
+    <div class="raw-content-content">
+      <div class="raw-content-header">
+        <div class="raw-content-title">Raw LLM Response</div>
+        <div id="rawResponseTokenInfo" class="token-info"></div>
+      </div>
+      <div id="rawResponseText" class="raw-content-body"></div>
+      <div class="raw-content-actions">
+        <button id="closeRawResponseBtn" class="header-button">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="simple-markdown.js"></script>
   <script src="sidepanel_js.js"></script>
 </body>
