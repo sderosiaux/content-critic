@@ -4,8 +4,9 @@ let currentTabId = null;
 let isAnalyzing = false;  // Add state tracking for analysis
 
 // Token limits
-const MAX_TOKENS_REGULAR = 8000;
+const MAX_TOKENS_REGULAR = 20000;
 const MAX_TOKENS_HACKERNEWS = 20000;
+const MAX_TOKENS_TRANSLATION = 20000;
 
 // Raw content handling
 let currentRawContent = null;
@@ -13,21 +14,27 @@ let currentRawContent = null;
 // Raw response handling
 let currentRawResponse = null;
 
-const CRITIC_PROMPT = `You are a relentless, insight-driven content challenger. Your role is to critically dissect any post, article, argument, or idea the user provides. You are not here to summarize, agree, or validate—instead, your purpose is to question, interrogate, and expose the underlying structure and weak points of the content.
+const CRITIC_PROMPT = `You are a sharp, relentless content critic.
+Your job is to break down any post, article, or idea I give you.
 
-You identify explicit and implicit assumptions and then ask sharp, probing questions to test their validity. You call out contradictions, logical inconsistencies, or missing perspectives. You also analyze content using mental models like inversion, second-order thinking, tradeoff analysis, and probabilistic reasoning.
+You do not summarize. You do not agree. You challenge.
 
-You avoid fluff, small talk, or vague statements. You do not soften your critiques or offer praise unless strategically relevant to deepen the analysis. You maintain a tone that is intelligent, focused, and curiosity-fueled. You are willing to be contrarian, incisive, and precise—always pushing the thinking further.
-If the user's idea appears solid, you still look for hidden weaknesses, unexplored consequences, or alternative framings. Your value is in helping the user see what others miss and generate sharper, more strategic questions in high-signal conversations.
+You focus on:
+- Uncovering assumptions (stated or hidden)
+- Spotting contradictions or weak logic
+- Testing ideas with second-order thinking, inversion, tradeoffs, and leverage analysis
+- Surfacing what others miss: blind spots, sharper framings, edge opportunities
 
-Some ideas to think deeply about:
+Ask hard questions like:
 - What breaks this?
-- What true, non-obvious? (what's the potential business edges?)
 - What's assumed? What are the tradeoffs?
-- What will be the new limiting factor if true?
-- What's the force multiplier/leverage/wedge? Is there an asymetry?
+- What’s a better wedge or leverage?
+- If this is true, what becomes the next constraint?
 
-Your response must be in JSON format with the following structure:
+Tone:
+- No fluff. No praise unless it serves the analysis. Stay curious, sharp, and bold. Push thinking further.
+
+Output rules: return ONLY a valid JSON object like this:
 {
   "analysis": {
     "summary": "A 5-10 rows table (Markdown format) summary highlighting core premise, risks, effects, and tradeoffs",
@@ -35,20 +42,24 @@ Your response must be in JSON format with the following structure:
   },
   "highlights": [
     {
-      "text": "The exact text from the content",
+      "text": "EXACT QUOTE FROM THE CONTENT - Copy and paste the exact text you want to highlight, word for word",
       "type": "fluff|fallacy|assumption|contradiction|inconsistency",
-      "explanation": "Brief explanation of why this is problematic",
+      "explanation": "Your analysis of why this text is problematic",
       "suggestion": "Optional suggestion for improvement"
     }
   ]
 }
 
-Types of highlights:
-- fluff: Vague, meaningless, or unnecessary content
-- fallacy: Logical fallacies or flawed reasoning
-- assumption: Unstated or questionable assumptions
-- contradiction: Contradictory statements or positions
-- inconsistency: Inconsistent arguments or claims
+CRITICAL RULES:
+1. Return ONLY the JSON object, with no other text
+2. Do not include any markdown formatting outside of the JSON
+3. Do not include any explanations or notes outside of the JSON
+4. The JSON must be valid and complete
+5. Each highlight's "text" field must be an exact quote from the content
+6. Do not put your analysis in the "text" field - use the "explanation" field instead
+7. Please generate minimum 5 and maximum 15 highlights. The more the better.
+8. DO NOT wrap markdown tables or headers in \`\`\`markdown\`\`\` or any other code block markers
+9. DO NOT USE ANY OTHER TYPE for HIGHLIGHTS. Only fluff|fallacy|assumption|contradiction|inconsistency are valid.
 
 Please analyze and critique the following content:`;
 
@@ -66,8 +77,36 @@ Structure your analysis as follows:
 
 Don't add comments before and after your analysis.
 Answer using the markdown format only, using #, ##, ### for headers.
+Each opinion should be a subtitle followed by some explanation.
 
 Here are the HackerNews comments to analyze:`;
+
+const TRANSLATION_PROMPT = `You are a translator. Return a JSON object of French translations.
+
+FORMAT: {"t0":"translation0","t1":"translation1",...}
+
+CRITICAL RULES:
+1. Return ONLY a valid JSON object
+2. Keep tech terms in English
+3. Keep numbers/units unchanged
+4. Remove unnecessary words only if that does not change the order of the translations
+5. IMPORTANT: Each input key (t0, t1, etc.) MUST have exactly one translation
+6. IMPORTANT: NEVER split a single input text into multiple translations
+7. IMPORTANT: NEVER merge multiple input texts into one translation
+8. IMPORTANT: Maintain the exact order of translations (t0, t1, t2, etc.)
+9. IMPORTANT: Do not add or remove any keys
+10. IMPORTANT: Each translation must be a complete, standalone translation of its input text
+11. IMPORTANT: If an input text contains multiple sentences, keep them together in one translation
+
+Example of CORRECT behavior:
+Input: {"t0":"Hello world","t1":"API endpoint","t2":"Your enterprise data architecture is sprawling"}
+Output: {"t0":"Bonjour le monde","t1":"API endpoint","t2":"Votre architecture de données d'entreprise est étendue"}
+
+Example of INCORRECT behavior (DO NOT DO THIS):
+Input: {"t0":"Your enterprise data architecture is sprawling"}
+Output: {"t0":"Votre architecture de données","t1":"d'entreprise est étendue"}  // WRONG: split into two translations
+
+Texts: `;
 
 // Sauvegarde la clé API
 function saveApiKey() {
@@ -165,6 +204,74 @@ function getUrlKey(url) {
   }
 }
 
+// Helper function to validate CRITIC response structure
+function validateCriticResponse(result) {
+  console.log('Validating CRITIC response:', result);
+  
+  // Check if result is an object
+  if (!result || typeof result !== 'object') {
+    throw new Error('Response must be a JSON object');
+  }
+  
+  // Check if analysis exists and is an object
+  if (!result.analysis || typeof result.analysis !== 'object') {
+    throw new Error('Response must have an "analysis" object');
+  }
+  
+  // Check if analysis has both summary and critique
+  if (!result.analysis.summary || typeof result.analysis.summary !== 'string') {
+    throw new Error('Analysis must have a "summary" string');
+  }
+  if (!result.analysis.critique || typeof result.analysis.critique !== 'string') {
+    throw new Error('Analysis must have a "critique" string');
+  }
+  
+  // Check if highlights exists and is an array
+  if (!Array.isArray(result.highlights)) {
+    throw new Error('Response must have a "highlights" array');
+  }
+  
+  // Validate each highlight
+  result.highlights.forEach((highlight, index) => {
+    if (!highlight || typeof highlight !== 'object') {
+      throw new Error(`Highlight at index ${index} must be an object`);
+    }
+    
+    // Check required fields
+    if (!highlight.text || typeof highlight.text !== 'string') {
+      throw new Error(`Highlight at index ${index} must have a "text" string`);
+    }
+    if (!highlight.type || typeof highlight.type !== 'string') {
+      throw new Error(`Highlight at index ${index} must have a "type" string`);
+    }
+    if (!highlight.explanation || typeof highlight.explanation !== 'string') {
+      throw new Error(`Highlight at index ${index} must have an "explanation" string`);
+    }
+    
+    // Validate type
+    const validTypes = ['fluff', 'fallacy', 'assumption', 'contradiction', 'inconsistency'];
+    if (!validTypes.includes(highlight.type)) {
+      throw new Error(`Highlight at index ${index} has invalid type "${highlight.type}". Must be one of: ${validTypes.join(', ')}`);
+    }
+    
+    // Validate suggestion (optional)
+    if (highlight.suggestion !== undefined && typeof highlight.suggestion !== 'string') {
+      throw new Error(`Highlight at index ${index} must have a "suggestion" string if provided`);
+    }
+  });
+  
+  // Validate highlight count
+  if (result.highlights.length < 5) {
+    throw new Error('Response must have at least 5 highlights');
+  }
+  if (result.highlights.length > 15) {
+    throw new Error('Response must have at most 15 highlights');
+  }
+  
+  console.log('CRITIC response validation passed');
+  return true;
+}
+
 // Helper function to make API calls
 async function makeApiCall(apiKey, prompt, isHackerNews) {
   let apiResponse;
@@ -172,7 +279,7 @@ async function makeApiCall(apiKey, prompt, isHackerNews) {
   let highlights = [];
 
   if (apiKey.startsWith('sk-ant-')) {
-    // Claude API
+    // Claude API for analysis
     const requestBody = {
       model: 'claude-3-sonnet-20240229',
       max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
@@ -210,28 +317,57 @@ async function makeApiCall(apiKey, prompt, isHackerNews) {
         const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const result = JSON.parse(jsonMatch[0]);
-          analysisResult = result.analysis;
+          // Validate CRITIC response structure
+          validateCriticResponse(result);
+          // Store the complete result structure
+          analysisResult = result;
           highlights = result.highlights;
         } else {
-          analysisResult = rawResponse;
+          throw new Error('No valid JSON object found in response');
         }
       } catch (e) {
-        console.error('Failed to parse JSON response:', e);
-        analysisResult = rawResponse;
+        console.error('Failed to parse or validate JSON response:', e);
+        throw new Error(`Invalid response format: ${e.message}`);
       }
     }
     
     return { analysisResult, highlights, rawResponse };
-    
   } else if (apiKey.startsWith('sk-')) {
-    // OpenAI API
-    const requestBody = {
-      model: 'gpt-4.1',
-      messages: [{
+    // Determine which model to use based on the task
+    const isTranslation = prompt.startsWith(TRANSLATION_PROMPT);
+    console.log('Task detection:', { 
+      isTranslation, 
+      promptStart: prompt.substring(0, 50),
+      translationPromptStart: TRANSLATION_PROMPT.substring(0, 50)
+    });
+    
+    // DO NOT CHANGE THE MODELS USED HERE
+    const model = isTranslation ? 'gpt-4.1-mini' : 'o4-mini'; // 'gpt-4o';
+    const maxTokens = isTranslation ? MAX_TOKENS_TRANSLATION : (isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR);
+    
+    // Prepare messages array
+    const messages = isTranslation ? [
+      {
+        role: 'system',
+        content: 'You are a translator. You MUST return a valid JSON object of translations. Do not include any other text in your response.'
+      },
+      {
         role: 'user',
         content: prompt
-      }],
-      max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR
+      }
+    ] : [
+      {
+        role: 'user',
+        content: prompt
+      }
+    ];
+    
+    const requestBody = {
+      model: model,
+      messages: messages,
+      //max_tokens: maxTokens,
+      //temperature: isTranslation ? 0.1 : 0.7,
+      response_format: isTranslation ? { type: "json_object" } : undefined
     };
     console.log('OpenAI API request:', requestBody);
     
@@ -255,19 +391,51 @@ async function makeApiCall(apiKey, prompt, isHackerNews) {
     
     if (isHackerNews) {
       analysisResult = rawResponse;
+    } else if (isTranslation) {
+      // For translations, we expect a JSON object
+      try {
+        // Just parse the response directly
+        const translations = JSON.parse(rawResponse);
+        
+        // Basic validation
+        if (typeof translations !== 'object' || Array.isArray(translations)) {
+          throw new Error('Response is not a JSON object');
+        }
+        
+        // Filter out invalid translations
+        const validTranslations = Object.entries(translations)
+          .filter(([key, value]) => 
+            key.startsWith('t') && 
+            typeof value === 'string'
+          )
+          .map(([key, value]) => ({ [key]: value }));
+        
+        if (validTranslations.length === 0) {
+          throw new Error('No valid translations found');
+        }
+        
+        return { rawResponse: JSON.stringify(validTranslations) };
+        
+      } catch (e) {
+        console.error('Failed to parse translation response:', e, 'Raw response:', rawResponse);
+        throw new Error('Invalid translation response format - ' + e.message);
+      }
     } else {
       try {
         const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const result = JSON.parse(jsonMatch[0]);
-          analysisResult = result.analysis;
+          // Validate CRITIC response structure
+          validateCriticResponse(result);
+          // Store the complete result structure
+          analysisResult = result;
           highlights = result.highlights;
         } else {
-          analysisResult = rawResponse;
+          throw new Error('No valid JSON object found in response');
         }
       } catch (e) {
-        console.error('Failed to parse JSON response:', e);
-        analysisResult = rawResponse;
+        console.error('Failed to parse or validate JSON response:', e);
+        throw new Error(`Invalid response format: ${e.message}`);
       }
     }
     
@@ -434,6 +602,7 @@ function displayResult(text, title = '') {
   try {
     let displayText;
     let htmlContent;
+    console.log('Displaying result:', text);
 
     // Handle both string and object responses
     if (typeof text === 'string') {
@@ -442,9 +611,9 @@ function displayResult(text, title = '') {
       displayText = displayText.replace(/\n\s*\n\s*\|/g, '\n|'); // Remove extra newlines before table rows
       displayText = displayText.replace(/\|\s*\n\s*\n/g, '|\n'); // Remove extra newlines after table rows
     } else if (text && typeof text === 'object') {
-      // Format the analysis object without the section titles
-      let summary = text.summary || '';
-      let critique = text.critique || '';
+      // Handle both direct analysis object and full result object
+      let summary = text.summary || (text.analysis && text.analysis.summary) || '';
+      let critique = text.critique || (text.analysis && text.analysis.critique) || '';
       
       // Fix tables in both summary and critique
       summary = summary.replace(/\|\n\|/g, '|\n|')
@@ -488,9 +657,48 @@ function displayError(error) {
   resultDiv.innerHTML = `<div class="result error">${error}</div>`;
 }
 
-// Event listeners
+// Update resetTabState to use URL
+async function resetTabState() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      console.log('No active tab found');
+      return;
+    }
+
+    const urlKey = getUrlKey(tab.url);
+    // Get current tab results
+    const { tabResults = {} } = await chrome.storage.local.get('tabResults');
+    
+    // Remove this URL's data
+    if (tabResults[urlKey]) {
+      delete tabResults[urlKey];
+      await chrome.storage.local.set({ tabResults });
+      console.log('Reset state for URL:', urlKey);
+    }
+
+    // Clear UI state
+    document.getElementById('result').innerHTML = '';
+    currentRawContent = null;
+    currentRawResponse = null;
+    setLoadingState(false);
+    
+    // Clear any highlights in the content script
+    chrome.tabs.sendMessage(tab.id, { action: "clearHighlights" });
+    
+  } catch (error) {
+    console.error('Error resetting tab state:', error);
+  }
+}
+
+// Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-  // API Key Modal handling
+  // Initialize the extension
+  initializeExtension();
+
+  // Add all event listeners
+  document.getElementById('resetTabBtn').addEventListener('click', resetTabState);
+  document.getElementById('analyzeBtn').addEventListener('click', analyzeContent);
   document.getElementById('apiKeyBtn').addEventListener('click', () => {
     const modal = document.getElementById('apiKeyModal');
     modal.classList.add('visible');
@@ -512,24 +720,19 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('apiKeyModal').classList.remove('visible');
   });
 
-  // Raw Content Modal handling
   document.getElementById('rawContentBtn').addEventListener('click', () => {
     const modal = document.getElementById('rawContentModal');
     const textDiv = document.getElementById('rawContentText');
     const editDiv = document.getElementById('rawContentEdit');
     
-    // Make sure we have content to show
     if (currentRawContent) {
-      // Update token info
       const tokenInfo = document.getElementById('rawContentTokenInfo');
       tokenInfo.textContent = computeTokenInfo(currentRawContent).displayText;
       
-      // Set content and show text div
       textDiv.textContent = currentRawContent;
       textDiv.style.display = 'block';
       editDiv.style.display = 'none';
       
-      // Show/hide appropriate buttons
       document.getElementById('saveContentBtn').style.display = 'none';
       document.getElementById('cancelEditBtn').style.display = 'none';
       document.getElementById('copyContentBtn').style.display = 'block';
@@ -545,7 +748,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('rawContentModal').classList.remove('visible');
   });
 
-  // Raw Response Modal handling
   document.getElementById('rawResponseBtn').addEventListener('click', () => {
     const modal = document.getElementById('rawResponseModal');
     const textDiv = document.getElementById('rawResponseText');
@@ -565,15 +767,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('rawResponseModal').classList.remove('visible');
   });
 
-  // Analyze button
-  document.getElementById('analyzeBtn').addEventListener('click', analyzeContent);
-
-  // API Key input handling
   document.getElementById('apiKey').addEventListener('input', (e) => {
     updateApiKeyStatus(e.target.value);
   });
 
-  // Raw content edit handling
   document.getElementById('rawContentText').addEventListener('dblclick', () => {
     const textDiv = document.getElementById('rawContentText');
     const editDiv = document.getElementById('rawContentEdit');
@@ -591,7 +788,6 @@ document.addEventListener('DOMContentLoaded', () => {
     textarea.focus();
   });
 
-  // Save content handling
   document.getElementById('saveContentBtn').addEventListener('click', async () => {
     const textarea = document.getElementById('rawContentTextarea');
     const newContent = textarea.value.trim();
@@ -617,17 +813,14 @@ document.addEventListener('DOMContentLoaded', () => {
         
         await updateAnalyzingState(urlKey, true, tab.id);
         
-        // Choose prompt based on the URL
         const isHackerNews = tab.url.includes('news.ycombinator.com');
         const prompt = isHackerNews ? 
           HACKERNEWS_PROMPT + '\n\n' + newContent :
           CRITIC_PROMPT + '\n\n' + newContent;
         
-        // Make API call
         const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews);
         currentRawResponse = rawResponse;
 
-        // Store results
         await storeAnalysisResults(urlKey, {
           content: newContent,
           title: tab.title,
@@ -639,7 +832,6 @@ document.addEventListener('DOMContentLoaded', () => {
           tabId: tab.id
         });
         
-        // Check if we're still on the same tab before displaying
         const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (currentTab.id === tab.id) {
           displayResult(analysisResult, tab.title);
@@ -662,13 +854,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Cancel edit handling
   document.getElementById('cancelEditBtn').addEventListener('click', () => {
     document.getElementById('rawContentEdit').style.display = 'none';
     document.getElementById('rawContentText').style.display = 'block';
     document.getElementById('saveContentBtn').style.display = 'none';
     document.getElementById('cancelEditBtn').style.display = 'none';
     document.getElementById('copyContentBtn').style.display = 'block';
+  });
+
+  document.getElementById('copyContentBtn').addEventListener('click', async () => {
+    if (currentRawContent) {
+      try {
+        await navigator.clipboard.writeText(currentRawContent);
+        const copyBtn = document.getElementById('copyContentBtn');
+        const originalText = copyBtn.textContent;
+        copyBtn.textContent = 'Copied!';
+        copyBtn.classList.add('copied');
+        setTimeout(() => {
+          copyBtn.textContent = originalText;
+          copyBtn.classList.remove('copied');
+        }, 2000);
+      } catch (err) {
+        console.error('Failed to copy content:', err);
+      }
+    }
   });
 
   // Close modals when clicking outside
@@ -687,12 +896,6 @@ document.addEventListener('DOMContentLoaded', () => {
       rawResponseModal.classList.remove('visible');
     }
   });
-
-  // Reset tab button
-  document.getElementById('resetTabBtn').addEventListener('click', resetTabState);
-
-  // Initialize the extension
-  initializeExtension();
 });
 
 // API Key section handling
@@ -844,7 +1047,8 @@ async function loadStoredAnalysis(tabId) {
       currentUrl: tab.url, 
       storedUrl: tabData?.url,
       hasAnalysis: !!tabData?.analysis,
-      isAnalyzing: tabData?.isAnalyzing
+      isAnalyzing: tabData?.isAnalyzing,
+      hasHighlights: !!tabData?.highlights?.length
     });
     
     // Sync UI state with the tab's analysis status
@@ -854,6 +1058,7 @@ async function loadStoredAnalysis(tabId) {
     if (tabData?.analysis) {
       console.log('Displaying stored analysis for URL:', tab.url);
       displayResult(tabData.analysis, tabData.title);
+      
       // Store the raw content and response
       if (tabData.content) {
         currentRawContent = filterHighlights(tabData.content);
@@ -862,6 +1067,20 @@ async function loadStoredAnalysis(tabId) {
       }
       if (tabData.rawResponse) {
         currentRawResponse = tabData.rawResponse;
+      }
+
+      // Restore highlights if we have them
+      if (tabData.highlights && tabData.highlights.length > 0) {
+        console.log('Restoring highlights:', tabData.highlights.length);
+        try {
+          await chrome.tabs.sendMessage(tabId, {
+            action: "highlightContent",
+            highlights: tabData.highlights
+          });
+          console.log('Highlights restored successfully');
+        } catch (error) {
+          console.error('Failed to restore highlights:', error);
+        }
       }
     } else {
       console.log('No matching analysis found:', {
@@ -942,8 +1161,291 @@ async function cleanupOldTabResults() {
   }
 }
 
-// Initialize the extension and set up initial state
+// Translation module
+const TranslationModule = (function() {
+  let isTranslating = false;
+  let originalNodes = new Map(); // Map of ID -> {node, originalText}
+  let nextNodeId = 0;
+  
+  // Add translation button to the panel
+  function addTranslationButton() {
+    const buttonContainer = document.createElement('div');
+    buttonContainer.className = 'action-buttons';
+    buttonContainer.innerHTML = `
+      <button id="translateBtn" class="header-button">
+        <span class="button-icon">🇫🇷</span>
+        <span class="button-text">Traduire</span>
+      </button>
+    `;
+    
+    // Insert after the analyze button
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    analyzeBtn.parentNode.insertBefore(buttonContainer, analyzeBtn.nextSibling);
+    
+    // Add click handler
+    document.getElementById('translateBtn').addEventListener('click', toggleTranslation);
+  }
+  
+  // Check if content script is ready
+  async function isContentScriptReady(tabId) {
+    try {
+      await chrome.tabs.sendMessage(tabId, { action: "ping" });
+      return true;
+    } catch (error) {
+      console.log('Content script not ready:', error);
+      return false;
+    }
+  }
+  
+  // Ensure content script is ready
+  async function ensureContentScriptReady() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      throw new Error('No active tab found');
+    }
+    
+    // Try to inject content script if not ready
+    if (!await isContentScriptReady(tab.id)) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        });
+        // Wait a bit for the script to initialize
+        await new Promise(resolve => setTimeout(resolve, 500));
+        // Check again
+        if (!await isContentScriptReady(tab.id)) {
+          throw new Error('Content script failed to initialize');
+        }
+      } catch (error) {
+        console.error('Failed to inject content script:', error);
+        throw new Error('Please refresh the page to enable translation');
+      }
+    }
+  }
+  
+  // Toggle translation state
+  async function toggleTranslation() {
+    const button = document.getElementById('translateBtn');
+    const buttonText = button.querySelector('.button-text');
+    const buttonIcon = button.querySelector('.button-icon');
+    
+    if (isTranslating) {
+      // Revert translation
+      try {
+        await ensureContentScriptReady();
+        await revertTranslation();
+        buttonText.textContent = 'Traduire';
+        buttonIcon.textContent = '🇫🇷';
+        isTranslating = false;
+      } catch (error) {
+        console.error('Failed to revert translation:', error);
+        displayError('Error: ' + error.message);
+        buttonText.textContent = 'Traduire';
+        buttonIcon.textContent = '🇫🇷';
+        isTranslating = false;
+      }
+    } else {
+      // Start translation
+      buttonText.textContent = 'Traduction...';
+      buttonIcon.textContent = '⏳';
+      button.disabled = true;
+      isTranslating = true;
+      
+      try {
+        await ensureContentScriptReady();
+        await translatePage();
+        buttonText.textContent = 'Revenir en Anglais';
+        buttonIcon.textContent = '↩️';
+        button.disabled = false;
+      } catch (error) {
+        console.error('Translation failed:', error);
+        buttonText.textContent = 'Erreur';
+        buttonIcon.textContent = '❌';
+        displayError('Error: ' + error.message);
+        setTimeout(() => {
+          buttonText.textContent = 'Traduire';
+          buttonIcon.textContent = '🇫🇷';
+          button.disabled = false;
+        }, 2000);
+        isTranslating = false;
+      }
+    }
+  }
+  
+  // Collect text nodes from the page
+  async function collectTextNodes() {
+    const textNodes = {};
+    originalNodes.clear();
+    nextNodeId = 0;
+    
+    // Get current tab
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      throw new Error('No active tab found');
+    }
+    
+    // Send message to content script to collect nodes
+    const response = await chrome.tabs.sendMessage(tab.id, { 
+      action: 'collectTextNodes',
+      options: {
+        minLength: 2, // Skip single characters
+        skipSelectors: 'script, style, noscript, [style*="display: none"], [style*="visibility: hidden"]'
+      }
+    });
+    
+    if (!response || !response.nodes) {
+      throw new Error('Failed to collect text nodes');
+    }
+    
+    // Validate and filter nodes
+    const validNodes = response.nodes.filter(node => 
+      node && 
+      typeof node.id === 'string' && 
+      typeof node.t === 'string' && 
+      node.t.trim().length > 0
+    );
+    
+    if (validNodes.length === 0) {
+      throw new Error('No valid text nodes found to translate');
+    }
+    
+    console.log('Collected nodes for translation:', {
+      total: response.nodes.length,
+      valid: validNodes.length,
+      sample: validNodes.slice(0, 3)
+    });
+    
+    // Store nodes and prepare for translation
+    validNodes.forEach(node => {
+      originalNodes.set(node.id, { id: node.id, text: node.t });
+      textNodes[node.id] = node.t; // Use ID as key in object
+    });
+    
+    return textNodes;
+  }
+  
+  // Translate the page
+  async function translatePage() {
+    const textNodes = await collectTextNodes();
+    if (Object.keys(textNodes).length === 0) {
+      console.log('No text nodes to translate');
+      return;
+    }
+    
+    console.log(`Collected ${Object.keys(textNodes).length} text nodes for translation`);
+    
+    // Get API key
+    const { apiKey } = await chrome.storage.local.get(['apiKey']);
+    if (!apiKey) {
+      throw new Error('No API key found');
+    }
+    
+    // Use the prompt from the constant
+    const prompt = TRANSLATION_PROMPT + JSON.stringify(textNodes);
+
+    console.log('Translation prompt:', {
+      nodeCount: Object.keys(textNodes).length,
+      sampleNodes: Object.values(textNodes).slice(0, 3),
+      promptLength: prompt.length
+    });
+    
+    try {
+      const { rawResponse } = await makeApiCall(apiKey, prompt, false);
+      
+      console.log('Raw translation response:', rawResponse);
+      
+      // Parse the response with strict validation
+      const parsed = JSON.parse(rawResponse);
+      console.log('Parsed response:', parsed);
+      
+      // Handle both array of objects and direct object formats
+      let translations = {};
+      if (Array.isArray(parsed)) {
+        // Convert array of objects to single object
+        parsed.forEach(item => {
+          const key = Object.keys(item)[0];
+          if (key && key.startsWith('t')) {
+            translations[key] = item[key];
+          }
+        });
+      } else if (typeof parsed === 'object') {
+        translations = parsed;
+      } else {
+        throw new Error('Invalid response format');
+      }
+      
+      console.log('Normalized translations:', translations);
+      console.log('Translation keys:', Object.keys(translations));
+      
+      // Simple validation: check if we have any valid translations
+      const validKeys = Object.keys(translations).filter(key => {
+        const isValid = key.startsWith('t') && typeof translations[key] === 'string';
+        console.log(`Validating key ${key}:`, { 
+          startsWithT: key.startsWith('t'),
+          isString: typeof translations[key] === 'string',
+          value: translations[key],
+          isValid 
+        });
+        return isValid;
+      });
+      
+      console.log('Valid keys found:', validKeys);
+      
+      if (validKeys.length === 0) {
+        console.error('No valid translations found. Full response:', translations);
+        throw new Error('No valid translations found in response');
+      }
+      
+      // Convert to format expected by content script
+      const formattedTranslations = validKeys.map(id => ({
+        id,
+        t: translations[id]
+      }));
+      
+      console.log('Formatted translations:', formattedTranslations);
+      
+      // Send translations to content script
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      await chrome.tabs.sendMessage(tab.id, {
+        action: 'applyTranslations',
+        translations: formattedTranslations
+      });
+      
+      console.log(`Applied ${formattedTranslations.length} translations`);
+      
+    } catch (error) {
+      console.error('Translation error:', error);
+      throw error;
+    }
+  }
+  
+  // Revert all translations
+  async function revertTranslation() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await chrome.tabs.sendMessage(tab.id, { action: 'revertTranslations' });
+    console.log('Reverted all translations');
+  }
+  
+  // Initialize the translation module
+  function initialize() {
+    addTranslationButton();
+  }
+  
+  return {
+    initialize
+  };
+})();
+
+// Add translation module initialization to the main initialize function
 async function initializeExtension() {
+  // Prevent multiple initializations
+  if (window.extensionInitialized) {
+    console.log('Extension already initialized, skipping');
+    return;
+  }
+  window.extensionInitialized = true;
+
   try {
     // Clean up old results when the extension starts
     await cleanupOldTabResults();
@@ -965,63 +1467,10 @@ async function initializeExtension() {
         await loadStoredAnalysis(tab.id);
       }
     }
+    
+    // Initialize translation module
+    TranslationModule.initialize();
   } catch (error) {
     console.error('Error during initialization:', error);
   }
 }
-
-// Replace the separate initialization calls with our new function
-initializeExtension();
-
-// Update resetTabState to use URL
-async function resetTabState() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) {
-      console.log('No active tab found');
-      return;
-    }
-
-    const urlKey = getUrlKey(tab.url);
-    // Get current tab results
-    const { tabResults = {} } = await chrome.storage.local.get('tabResults');
-    
-    // Remove this URL's data
-    if (tabResults[urlKey]) {
-      delete tabResults[urlKey];
-      await chrome.storage.local.set({ tabResults });
-      console.log('Reset state for URL:', urlKey);
-    }
-
-    // Clear UI state
-    document.getElementById('result').innerHTML = '';
-    currentRawContent = null;
-    currentRawResponse = null;
-    setLoadingState(false);
-    
-    // Clear any highlights in the content script
-    chrome.tabs.sendMessage(tab.id, { action: "clearHighlights" });
-    
-  } catch (error) {
-    console.error('Error resetting tab state:', error);
-  }
-}
-
-// Copy content button handling
-document.getElementById('copyContentBtn').addEventListener('click', async () => {
-  if (currentRawContent) {
-    try {
-      await navigator.clipboard.writeText(currentRawContent);
-      const copyBtn = document.getElementById('copyContentBtn');
-      const originalText = copyBtn.textContent;
-      copyBtn.textContent = 'Copied!';
-      copyBtn.classList.add('copied');
-      setTimeout(() => {
-        copyBtn.textContent = originalText;
-        copyBtn.classList.remove('copied');
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to copy content:', err);
-    }
-  }
-});

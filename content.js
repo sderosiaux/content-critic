@@ -227,75 +227,23 @@
     // Create a single tooltip for this highlight
     const tooltip = createTooltip(text, type, explanation, suggestion);
     let highlightCount = 0;
-    let nodesChecked = 0;
     
-    // Function to process a text node
-    function processTextNode(node) {
-      nodesChecked++;
-      const nodeText = node.textContent;
-      if (!nodeText.includes(text)) return false;
-      
-      console.log('Found matching text in node:', {
-        nodeText: nodeText.substring(0, 50) + '...',
-        searchText: text,
-        parentTag: node.parentElement.tagName,
-        parentClass: node.parentElement.className,
-        nodePath: getNodePath(node)
-      });
-      
-      const parts = nodeText.split(text);
-      const fragment = document.createDocumentFragment();
-      
-      parts.forEach((part, i) => {
-        if (part) fragment.appendChild(document.createTextNode(part));
-        if (i < parts.length - 1) {
-          const span = document.createElement('span');
-          span.className = `content-critic-highlight ${type}`;
-          span.textContent = text;
-          
-          // Add tooltip behavior with simplified positioning
-          span.addEventListener('mouseenter', (e) => {
-            const rect = span.getBoundingClientRect();
-            positionTooltip(tooltip, rect);
-            tooltip.classList.add('visible');
-          });
-          
-          span.addEventListener('mouseleave', () => {
-            tooltip.classList.remove('visible');
-          });
-          
-          fragment.appendChild(span);
-          highlightCount++;
-        }
-      });
-      
-      node.parentNode.replaceChild(fragment, node);
-      return true;
+    // Function to normalize text (remove extra spaces and HTML tags)
+    function normalizeText(str) {
+      return str.replace(/<[^>]*>/g, '') // Remove HTML tags
+                .replace(/\s+/g, ' ')     // Normalize spaces
+                .trim();                  // Trim whitespace
     }
     
-    // Helper function to get node path for debugging
-    function getNodePath(node) {
-      const path = [];
-      let current = node;
-      while (current && current.parentElement) {
-        const tag = current.parentElement.tagName.toLowerCase();
-        const id = current.parentElement.id ? `#${current.parentElement.id}` : '';
-        const classes = Array.from(current.parentElement.classList).map(c => `.${c}`).join('');
-        path.unshift(`${tag}${id}${classes}`);
-        current = current.parentElement;
-      }
-      return path.join(' > ');
-    }
-    
-    // Walk through all text nodes
+    // Get all text nodes in the page
+    const textNodes = [];
     const walker = document.createTreeWalker(
       document.body,
       NodeFilter.SHOW_TEXT,
       {
         acceptNode: function(node) {
-          // Skip if parent is already highlighted or is a script/style
-          if (node.parentElement.closest('.content-critic-highlight') ||
-              node.parentElement.closest('script') ||
+          // Skip if parent is a script/style
+          if (node.parentElement.closest('script') ||
               node.parentElement.closest('style') ||
               node.parentElement.closest('noscript')) {
             return NodeFilter.FILTER_REJECT;
@@ -308,12 +256,167 @@
     
     let node;
     while (node = walker.nextNode()) {
-      processTextNode(node);
+      textNodes.push(node);
+    }
+    
+    // Find blocks that contain our text
+    const searchText = normalizeText(text);
+    console.log('Searching for text to highlight:', {
+      text,
+      normalized: searchText
+    });
+    
+    // Group text nodes by their block parent
+    const blocks = new Map();
+    for (const node of textNodes) {
+      const block = node.parentElement.closest('p, div, article, section, main, aside, nav, header, footer, li, td, th, h1, h2, h3, h4, h5, h6');
+      if (!block) continue;
+      
+      // Skip blocks that are already fully highlighted
+      if (block.textContent === text) continue;
+      
+      const blockText = normalizeText(block.textContent);
+      if (blockText.includes(searchText)) {
+        console.log('Found matching block:', {
+          text: blockText,
+          contains: true
+        });
+      }
+      
+      if (!blocks.has(block)) {
+        blocks.set(block, []);
+      }
+      blocks.get(block).push(node);
+    }
+    
+    // Process each block
+    for (const [block, nodes] of blocks) {
+      // Get the full text of the block
+      const blockText = normalizeText(block.textContent);
+      if (!blockText.includes(searchText)) continue;
+      
+      // Find the nodes that contain our text
+      let startNode = null;
+      let endNode = null;
+      let currentText = '';
+      
+      // First pass: collect all text nodes and their text
+      const nodeTexts = nodes.map(node => ({
+        node,
+        text: normalizeText(node.textContent)
+      }));
+      
+      // Second pass: find start and end nodes
+      for (let i = 0; i < nodeTexts.length; i++) {
+        currentText += nodeTexts[i].text + ' ';
+        const normalizedCurrent = normalizeText(currentText);
+        
+        // Find start node
+        if (!startNode && normalizedCurrent.includes(searchText)) {
+          startNode = nodeTexts[i].node;
+        }
+        
+        // Find end node
+        if (startNode && !endNode) {
+          // If we've found the start, look for where the text ends
+          const startPos = normalizedCurrent.indexOf(searchText);
+          if (startPos !== -1) {
+            // Find the node that contains the end of our search text
+            let accumulatedLength = 0;
+            for (let j = 0; j <= i; j++) {
+              accumulatedLength += nodeTexts[j].text.length + 1; // +1 for the space we added
+              if (accumulatedLength >= startPos + searchText.length) {
+                endNode = nodeTexts[j].node;
+                break;
+              }
+            }
+          }
+        }
+        
+        if (startNode && endNode) break;
+      }
+      
+      if (!startNode || !endNode) continue;
+      
+      // Create highlight spans
+      const fragment = document.createDocumentFragment();
+      let isHighlighting = false;
+      
+      for (const node of nodes) {
+        // Skip if node is already highlighted
+        if (node.parentElement.classList.contains('content-critic-highlight')) {
+          fragment.appendChild(node.parentElement.cloneNode(true));
+          continue;
+        }
+        
+        if (node === startNode) {
+          isHighlighting = true;
+          const span = document.createElement('span');
+          span.className = `content-critic-highlight ${type}`;
+          span.textContent = node.textContent;
+          
+          // Add tooltip behavior
+          span.addEventListener('mouseenter', (e) => {
+            const rect = span.getBoundingClientRect();
+            positionTooltip(tooltip, rect);
+            tooltip.classList.add('visible');
+          });
+          
+          span.addEventListener('mouseleave', () => {
+            tooltip.classList.remove('visible');
+          });
+          
+          fragment.appendChild(span);
+          highlightCount++;
+        } else if (node === endNode) {
+          const span = document.createElement('span');
+          span.className = `content-critic-highlight ${type}`;
+          span.textContent = node.textContent;
+          
+          // Add tooltip behavior
+          span.addEventListener('mouseenter', (e) => {
+            const rect = span.getBoundingClientRect();
+            positionTooltip(tooltip, rect);
+            tooltip.classList.add('visible');
+          });
+          
+          span.addEventListener('mouseleave', () => {
+            tooltip.classList.remove('visible');
+          });
+          
+          fragment.appendChild(span);
+          highlightCount++;
+          isHighlighting = false;
+        } else if (isHighlighting) {
+          const span = document.createElement('span');
+          span.className = `content-critic-highlight ${type}`;
+          span.textContent = node.textContent;
+          
+          // Add tooltip behavior
+          span.addEventListener('mouseenter', (e) => {
+            const rect = span.getBoundingClientRect();
+            positionTooltip(tooltip, rect);
+            tooltip.classList.add('visible');
+          });
+          
+          span.addEventListener('mouseleave', () => {
+            tooltip.classList.remove('visible');
+          });
+          
+          fragment.appendChild(span);
+          highlightCount++;
+        } else {
+          fragment.appendChild(document.createTextNode(node.textContent));
+        }
+      }
+      
+      // Replace block content with our fragment
+      block.innerHTML = '';
+      block.appendChild(fragment);
     }
     
     console.log(`Highlighting complete:`, {
       text: text.substring(0, 50) + '...',
-      nodesChecked,
       highlightsAdded: highlightCount,
       highlightType: type
     });
@@ -351,87 +454,18 @@
     return { content, title, url };
   }
 
-  // Function to load highlights from tabResults
-  async function loadTabHighlights() {
-    try {
-      const currentUrl = window.location.href;
-      console.log('Loading highlights for URL:', currentUrl);
-      
-      const { tabResults = {} } = await chrome.storage.local.get('tabResults');
-      console.log('All tab results:', Object.entries(tabResults).map(([key, data]) => ({
-        url: data.url,
-        type: data.type,
-        hasHighlights: !!data.highlights,
-        highlightCount: data.highlights?.length
-      })));
-      
-      // Find matching tab data
-      const matchingTab = Object.entries(tabResults).find(([_, data]) => 
-        data.url === currentUrl || 
-        (data.url && currentUrl.startsWith(data.url))
-      );
-      
-      if (matchingTab) {
-        const [tabId, data] = matchingTab;
-        console.log('Found stored data for tab:', {
-          tabId,
-          url: data.url,
-          type: data.type,
-          hasHighlights: !!data.highlights,
-          highlightCount: data.highlights?.length,
-          highlights: data.highlights // Log the actual highlights array
-        });
-        
-        // Only process highlights for non-HackerNews content
-        if (data.type !== 'hackernews' && data.highlights && data.highlights.length > 0) {
-          // Remove any existing highlights first
-          removeHighlights();
-          console.log('Removed existing highlights');
-          
-          // Apply the stored highlights
-          data.highlights.forEach((h, index) => {
-            console.log(`Applying highlight ${index + 1}/${data.highlights.length}:`, {
-              text: h.text.substring(0, 50) + '...',
-              type: h.type,
-              explanation: h.explanation,
-              suggestion: h.suggestion
-            });
-            highlightText(h.text, h.type, h.explanation, h.suggestion);
-          });
-          console.log(`Applied ${data.highlights.length} highlights from tab ${tabId}`);
-        } else {
-          console.log('No highlights to apply. Details:', {
-            isHackerNews: data.type === 'hackernews',
-            hasHighlights: !!data.highlights,
-            highlightCount: data.highlights?.length,
-            type: data.type
-          });
-        }
-      } else {
-        console.log('No matching tab found for URL:', currentUrl);
-        console.log('Current URL:', currentUrl);
-        console.log('Available URLs:', Object.values(tabResults).map(d => d.url));
-      }
-    } catch (error) {
-      console.error('Error loading tab highlights:', error);
-    }
-  }
+  // Translation state
+  let translatedNodes = new Map(); // Map of ID -> {node, originalText, parentElement}
 
-  // Initialize: load highlights from tabResults
-  async function initialize() {
-    // Wait for the page to be fully loaded
-    if (document.readyState === 'complete') {
-      await loadTabHighlights();
-    } else {
-      window.addEventListener('load', loadTabHighlights);
-    }
-  }
-
-  // Écoute les messages du background script
+  // Add message handlers for translation
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('Content Critic: Message reçu:', request);
     
-    if (request.action === 'getContent') {
+    if (request.action === 'ping') {
+      // Simple ping to check if content script is ready
+      sendResponse({ status: 'ready' });
+      return true;
+    } else if (request.action === 'getContent') {
       console.log('Content Critic: Récupération du contenu demandée');
       const { content, title, url } = extractContent();
       sendResponse({ content, title, url });
@@ -455,10 +489,126 @@
         console.log('Content Critic: Réponse du background script:', response);
       });
       sendResponse({ success: true });
+    } else if (request.action === 'collectTextNodes') {
+      // Collect visible text nodes
+      const nodes = [];
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode: function(node) {
+            // Skip if parent matches skipSelectors or is not valid
+            if (!node.parentElement || 
+                node.parentElement.closest(request.options.skipSelectors) ||
+                !isNodeVisible(node)) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            
+            // Don't trim here to preserve whitespace
+            const text = node.textContent;
+            if (text && text.length >= request.options.minLength) {
+              return NodeFilter.FILTER_ACCEPT;
+            }
+            return NodeFilter.FILTER_REJECT;
+          }
+        },
+        false
+      );
+      
+      let node;
+      let nodeId = 0;
+      while (node = walker.nextNode()) {
+        const text = node.textContent;
+        // Skip nodes that are only whitespace
+        if (!text || /^\s*$/.test(text)) continue;
+        
+        // Use shorter ID format: t0, t1, t2, etc.
+        const id = `t${nodeId++}`;
+        nodes.push({
+          id,
+          t: text // Store the text with original whitespace
+        });
+        
+        // Store reference to node and its parent
+        translatedNodes.set(id, {
+          node,
+          originalText: text, // Store original text with whitespace
+          parentElement: node.parentElement
+        });
+      }
+      
+      console.log('Collected nodes for translation:', {
+        count: nodes.length,
+        sample: nodes.slice(0, 3).map(n => ({
+          id: n.id,
+          text: n.t.replace(/\n/g, '\\n').replace(/\s/g, '·') // Visualize whitespace
+        }))
+      });
+      
+      sendResponse({ nodes });
+      
+    } else if (request.action === 'applyTranslations') {
+      // Sort translations by numeric key to ensure order (t0, t1, t2, etc.)
+      const sortedTranslations = request.translations.sort((a, b) => {
+        const numA = parseInt(a.id.substring(1));
+        const numB = parseInt(b.id.substring(1));
+        return numA - numB;
+      });
+
+      // Apply translations in order
+      sortedTranslations.forEach(({ id, t }) => {
+        const nodeData = translatedNodes.get(id);
+        if (nodeData && nodeData.node && nodeData.parentElement) {
+          try {
+            // Simply replace the text content
+            nodeData.node.textContent = t;
+            nodeData.parentElement.classList.add('content-critic-translated');
+            
+            console.log('Translated node:', {
+              id,
+              originalText: nodeData.originalText,
+              newText: t
+            });
+          } catch (error) {
+            console.error('Error translating node:', {
+              id,
+              error: error.message
+            });
+          }
+        } else {
+          console.warn('Node not found for translation:', id);
+        }
+      });
+      sendResponse({ success: true });
+      
+    } else if (request.action === 'revertTranslations') {
+      // Revert all translations
+      translatedNodes.forEach(({ node, originalText, parentElement }) => {
+        if (node && parentElement) {
+          node.textContent = originalText; // Restore original text with whitespace
+          parentElement.classList.remove('content-critic-translated');
+        }
+      });
+      translatedNodes.clear();
+      sendResponse({ success: true });
     }
     
-    return true; // Important pour garder la connexion ouverte
+    return true; // Keep the message channel open for async responses
   });
+
+  // Helper function to check if a node is visible
+  function isNodeVisible(node) {
+    const style = window.getComputedStyle(node.parentElement);
+    return style.display !== 'none' && 
+           style.visibility !== 'hidden' && 
+           style.opacity !== '0' &&
+           node.parentElement.offsetParent !== null;
+  }
+
+  // Initialize content script
+  function initialize() {
+    console.log('Content Critic: Content script initialized');
+  }
 
   // Start initialization
   initialize();
