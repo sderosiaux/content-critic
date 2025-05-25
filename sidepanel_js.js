@@ -272,177 +272,184 @@ function validateCriticResponse(result) {
   return true;
 }
 
-// Helper function to make API calls
-async function makeApiCall(apiKey, prompt, isHackerNews) {
-  let apiResponse;
+// Helper function to call Claude API
+async function _callClaudeApi(apiKey, prompt, isHackerNews) {
+  const requestBody = {
+    model: 'claude-3-sonnet-20240229',
+    max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
+    messages: [{
+      role: 'user',
+      content: prompt
+    }]
+  };
+  console.log('Claude API request:', requestBody);
+
+  const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  const data = await apiResponse.json();
+
+  if (data.error) {
+    throw new Error(data.error.message);
+  }
+
+  const rawResponse = data.content[0].text;
   let analysisResult;
   let highlights = [];
 
+  if (isHackerNews) {
+    analysisResult = rawResponse;
+  } else {
+    // For Claude, the response is expected to be a JSON object for CRITIC tasks
+    // The validation will happen in the main makeApiCall function
+    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      // We parse it here to extract highlights, but validation is separate
+      const parsedResult = JSON.parse(jsonMatch[0]);
+      analysisResult = parsedResult; // Store the parsed object
+      highlights = parsedResult.highlights || [];
+    } else {
+      throw new Error('No valid JSON object found in Claude response for CRITIC task');
+    }
+  }
+  return { analysisResult, highlights, rawResponse };
+}
+
+// Helper function to call OpenAI API
+async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation) {
+  console.log('OpenAI task detection:', {
+    isTranslation,
+    isHackerNews,
+    promptStart: prompt.substring(0, 50),
+    translationPromptStart: isTranslation ? TRANSLATION_PROMPT.substring(0, 50) : undefined
+  });
+
+  // DO NOT CHANGE THE MODELS USED HERE
+  const model = isTranslation ? 'gpt-4.1-mini' : 'o4-mini'; // 'gpt-4o';
+  const maxTokens = isTranslation ? MAX_TOKENS_TRANSLATION : (isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR);
+
+  const messages = isTranslation ? [
+    {
+      role: 'system',
+      content: 'You are a translator. You MUST return a valid JSON object of translations. Do not include any other text in your response.'
+    },
+    {
+      role: 'user',
+      content: prompt
+    }
+  ] : [
+    {
+      role: 'user',
+      content: prompt
+    }
+  ];
+
+  const requestBody = {
+    model: model,
+    messages: messages,
+    //max_tokens: maxTokens, // Max tokens is often not needed and can cause issues with newer models
+    //temperature: isTranslation ? 0.1 : 0.7, // Temperature is also often best left to default
+    response_format: isTranslation ? { type: "json_object" } : undefined
+  };
+  console.log('OpenAI API request:', requestBody);
+
+  const apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  const data = await apiResponse.json();
+
+  if (data.error) {
+    throw new Error(data.error.message);
+  }
+
+  const rawResponse = data.choices[0].message.content;
+  let analysisResult;
+  let highlights = [];
+
+  if (isHackerNews) {
+    analysisResult = rawResponse;
+  } else if (isTranslation) {
+    // For translations, we expect a JSON object
+    try {
+      const translations = JSON.parse(rawResponse);
+      if (typeof translations !== 'object' || Array.isArray(translations)) {
+        throw new Error('Response is not a JSON object');
+      }
+      // Filter out invalid translations - this is specific to translation logic
+      const validTranslations = Object.entries(translations)
+        .filter(([key, value]) =>
+          key.startsWith('t') &&
+          typeof value === 'string'
+        )
+        .map(([key, value]) => ({ [key]: value }));
+
+      if (validTranslations.length === 0) {
+        throw new Error('No valid translations found');
+      }
+      // For translations, the main makeApiCall expects only rawResponse
+      return { rawResponse: JSON.stringify(validTranslations) };
+    } catch (e) {
+      console.error('Failed to parse translation response:', e, 'Raw response:', rawResponse);
+      throw new Error('Invalid translation response format - ' + e.message);
+    }
+  } else {
+    // For OpenAI, non-HackerNews, non-translation (i.e., CRITIC task)
+    // The response is expected to be a JSON object.
+    // Validation will happen in the main makeApiCall function.
+    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      // We parse it here to extract highlights, but validation is separate
+      const parsedResult = JSON.parse(jsonMatch[0]);
+      analysisResult = parsedResult; // Store the parsed object
+      highlights = parsedResult.highlights || [];
+    } else {
+      throw new Error('No valid JSON object found in OpenAI response for CRITIC task');
+    }
+  }
+  return { analysisResult, highlights, rawResponse };
+}
+
+// Main API call orchestrator
+async function makeApiCall(apiKey, prompt, isHackerNews) {
+  let result;
+  const isTranslation = prompt.startsWith(TRANSLATION_PROMPT);
+
   if (apiKey.startsWith('sk-ant-')) {
-    // Claude API for analysis
-    const requestBody = {
-      model: 'claude-3-sonnet-20240229',
-      max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
-      messages: [{
-        role: 'user',
-        content: prompt
-      }]
-    };
-    console.log('Claude API request:', requestBody);
-    
-    apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify(requestBody)
-    });
-    
-    const data = await apiResponse.json();
-    
-    if (data.error) {
-      throw new Error(data.error.message);
-    }
-    
-    // Store the raw response
-    const rawResponse = data.content[0].text;
-    
-    if (isHackerNews) {
-      analysisResult = rawResponse;
-    } else {
-      try {
-        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const result = JSON.parse(jsonMatch[0]);
-          // Validate CRITIC response structure
-          validateCriticResponse(result);
-          // Store the complete result structure
-          analysisResult = result;
-          highlights = result.highlights;
-        } else {
-          throw new Error('No valid JSON object found in response');
-        }
-      } catch (e) {
-        console.error('Failed to parse or validate JSON response:', e);
-        throw new Error(`Invalid response format: ${e.message}`);
-      }
-    }
-    
-    return { analysisResult, highlights, rawResponse };
+    result = await _callClaudeApi(apiKey, prompt, isHackerNews);
   } else if (apiKey.startsWith('sk-')) {
-    // Determine which model to use based on the task
-    const isTranslation = prompt.startsWith(TRANSLATION_PROMPT);
-    console.log('Task detection:', { 
-      isTranslation, 
-      promptStart: prompt.substring(0, 50),
-      translationPromptStart: TRANSLATION_PROMPT.substring(0, 50)
-    });
-    
-    // DO NOT CHANGE THE MODELS USED HERE
-    const model = isTranslation ? 'gpt-4.1-mini' : 'o4-mini'; // 'gpt-4o';
-    const maxTokens = isTranslation ? MAX_TOKENS_TRANSLATION : (isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR);
-    
-    // Prepare messages array
-    const messages = isTranslation ? [
-      {
-        role: 'system',
-        content: 'You are a translator. You MUST return a valid JSON object of translations. Do not include any other text in your response.'
-      },
-      {
-        role: 'user',
-        content: prompt
-      }
-    ] : [
-      {
-        role: 'user',
-        content: prompt
-      }
-    ];
-    
-    const requestBody = {
-      model: model,
-      messages: messages,
-      //max_tokens: maxTokens,
-      //temperature: isTranslation ? 0.1 : 0.7,
-      response_format: isTranslation ? { type: "json_object" } : undefined
-    };
-    console.log('OpenAI API request:', requestBody);
-    
-    apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify(requestBody)
-    });
-    
-    const data = await apiResponse.json();
-    
-    if (data.error) {
-      throw new Error(data.error.message);
+    result = await _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation);
+  } else {
+    throw new Error('Invalid API key format');
+  }
+
+  // Validate CRITIC response structure for non-HackerNews, non-translation calls
+  // The `analysisResult` from helpers is expected to be a parsed JSON object for CRITIC tasks
+  if (!isHackerNews && !isTranslation) {
+    if (!result.analysisResult || typeof result.analysisResult !== 'object') {
+      throw new Error('Analysis result is not a valid object for CRITIC task.');
     }
-    
-    // Store the raw response
-    const rawResponse = data.choices[0].message.content;
-    
-    if (isHackerNews) {
-      analysisResult = rawResponse;
-    } else if (isTranslation) {
-      // For translations, we expect a JSON object
-      try {
-        // Just parse the response directly
-        const translations = JSON.parse(rawResponse);
-        
-        // Basic validation
-        if (typeof translations !== 'object' || Array.isArray(translations)) {
-          throw new Error('Response is not a JSON object');
-        }
-        
-        // Filter out invalid translations
-        const validTranslations = Object.entries(translations)
-          .filter(([key, value]) => 
-            key.startsWith('t') && 
-            typeof value === 'string'
-          )
-          .map(([key, value]) => ({ [key]: value }));
-        
-        if (validTranslations.length === 0) {
-          throw new Error('No valid translations found');
-        }
-        
-        return { rawResponse: JSON.stringify(validTranslations) };
-        
-      } catch (e) {
-        console.error('Failed to parse translation response:', e, 'Raw response:', rawResponse);
-        throw new Error('Invalid translation response format - ' + e.message);
-      }
-    } else {
-      try {
-        const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const result = JSON.parse(jsonMatch[0]);
-          // Validate CRITIC response structure
-          validateCriticResponse(result);
-          // Store the complete result structure
-          analysisResult = result;
-          highlights = result.highlights;
-        } else {
-          throw new Error('No valid JSON object found in response');
-        }
-      } catch (e) {
-        console.error('Failed to parse or validate JSON response:', e);
-        throw new Error(`Invalid response format: ${e.message}`);
-      }
-    }
-    
-    return { analysisResult, highlights, rawResponse };
+    validateCriticResponse(result.analysisResult);
+    // Ensure highlights are taken from the validated analysisResult
+    result.highlights = result.analysisResult.highlights;
   }
   
-  throw new Error('Invalid API key format');
+  // For translation, only rawResponse is returned by the helper.
+  // For other cases, analysisResult, highlights, and rawResponse are returned.
+  return result;
 }
 
 // Helper function to store analysis results
@@ -468,50 +475,119 @@ async function updateAnalyzingState(urlKey, isAnalyzing, tabId) {
   await chrome.storage.local.set({ tabResults });
 }
 
+// New consolidated function to execute analysis and update UI
+async function _executeAnalysisAndUpdateUI(contentToAnalyze, tabInfo, apiKey) {
+  const urlKey = getUrlKey(tabInfo.url);
+  currentTabId = tabInfo.id; // Ensure currentTabId is set for global use if needed
+  isAnalyzing = true; // Set global analyzing state
+
+  setLoadingState(true);
+  await updateAnalyzingState(urlKey, true, tabInfo.id);
+
+  try {
+    // currentRawContent is updated with the content being analyzed
+    currentRawContent = contentToAnalyze; 
+    
+    // Update token info for the content being analyzed
+    const tokenInfo = computeTokenInfo(contentToAnalyze);
+    document.getElementById('rawContentTokenInfo').textContent = tokenInfo.displayText;
+
+    const isHackerNews = tabInfo.url.includes('news.ycombinator.com');
+    const prompt = isHackerNews ?
+      HACKERNEWS_PROMPT + '\n\n' + contentToAnalyze :
+      CRITIC_PROMPT + '\n\n' + contentToAnalyze;
+
+    console.log('Using prompt for:', isHackerNews ? 'HackerNews' : 'Generic content');
+    console.log('Token limits:', {
+      isHackerNews,
+      maxTokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
+      contentLength: contentToAnalyze.length,
+      promptLength: prompt.length,
+      estimatedTokens: Math.ceil(prompt.length / 4)
+    });
+
+    const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews);
+    currentRawResponse = rawResponse; // Update global raw response
+
+    await storeAnalysisResults(urlKey, {
+      content: contentToAnalyze, // Store the analyzed content
+      title: tabInfo.title,
+      url: tabInfo.url,
+      analysis: analysisResult,
+      rawResponse,
+      highlights: isHackerNews ? [] : highlights,
+      type: isHackerNews ? 'hackernews' : 'generic',
+      tabId: tabInfo.id
+    });
+
+    if (!isHackerNews && highlights && highlights.length > 0) {
+      chrome.tabs.sendMessage(tabInfo.id, {
+        action: "highlightContent",
+        highlights: highlights
+      });
+    }
+
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab.id === tabInfo.id) {
+      displayResult(analysisResult, tabInfo.title);
+    }
+
+  } catch (error) {
+    // Ensure that updateAnalyzingState is called with the correct tabId even in error scenarios
+    await updateAnalyzingState(urlKey, false, tabInfo.id); 
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab.id === tabInfo.id) {
+      displayError('Error: ' + error.message);
+    }
+  } finally {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab.id === tabInfo.id) {
+      isAnalyzing = false; // Reset global analyzing state
+      setLoadingState(false);
+    }
+  }
+}
+
 async function analyzeContent() {
-  // Get API key from storage first, then fallback to input
   const { apiKey: storedApiKey } = await chrome.storage.local.get(['apiKey']);
   const inputApiKey = document.getElementById('apiKey').value;
   const apiKey = storedApiKey || inputApiKey;
-  
+
   if (!apiKey) {
     displayError('Please enter your API key');
     return;
   }
-  
-  // Get current tab
+
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) {
-    displayError('Unable to find active tab');
+  if (!tab || !tab.url) { // Ensure tab.url exists
+    displayError('Unable to find active tab or tab URL');
     return;
   }
-
-  const urlKey = getUrlKey(tab.url);
-  currentTabId = tab.id;
-  isAnalyzing = true;
   
-  // Save the API key if it's from input
+  // Save the API key if it's from input and different from stored
   if (inputApiKey && inputApiKey !== storedApiKey) {
     saveApiKey();
   }
-  
-  setLoadingState(true);
+
+  // Show loading state immediately
+  setLoadingState(true); 
+  const urlKey = getUrlKey(tab.url);
   await updateAnalyzingState(urlKey, true, tab.id);
-  
+
+
   try {
-    // Get page content
     const response = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Timeout: Unable to get page content'));
       }, 5000);
 
-      chrome.tabs.sendMessage(tab.id, { action: "getContent" }, (response) => {
+      chrome.tabs.sendMessage(tab.id, { action: "getContent" }, (msgResponse) => {
         clearTimeout(timeout);
         if (chrome.runtime.lastError) {
           reject(new Error('Content script not ready. Please refresh the page.'));
           return;
         }
-        resolve(response);
+        resolve(msgResponse);
       });
     });
 
@@ -519,76 +595,16 @@ async function analyzeContent() {
       throw new Error('Unable to get page content');
     }
 
-    // Filter out our own highlights from the content
     const cleanContent = filterHighlights(response.content);
-    currentRawContent = cleanContent;
-    
-    // Update token info
-    const tokenInfo = computeTokenInfo(cleanContent);
-    document.getElementById('rawContentTokenInfo').textContent = tokenInfo.displayText;
+    // Pass necessary tab info to the new function
+    await _executeAnalysisAndUpdateUI(cleanContent, { id: tab.id, url: tab.url, title: response.title }, apiKey);
 
-    // Determine if we're on HackerNews
-    const isHackerNews = tab.url.includes('news.ycombinator.com');
-    
-    // Choose prompt based on the URL
-    const prompt = isHackerNews ? 
-      HACKERNEWS_PROMPT + '\n\n' + cleanContent :
-      CRITIC_PROMPT + '\n\n' + cleanContent;
-    
-    console.log('Using prompt for:', isHackerNews ? 'HackerNews' : 'Generic content');
-    console.log('Token limits:', {
-      isHackerNews,
-      maxTokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
-      contentLength: cleanContent.length,
-      promptLength: prompt.length,
-      estimatedTokens: Math.ceil(prompt.length / 4)
-    });
-
-    // Make API call
-    const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews);
-    currentRawResponse = rawResponse;
-
-    // Store results
-    await storeAnalysisResults(urlKey, {
-      content: cleanContent,
-      title: response.title,
-      url: response.url,
-      analysis: analysisResult,
-      rawResponse,
-      highlights: isHackerNews ? [] : highlights,
-      type: isHackerNews ? 'hackernews' : 'generic',
-      tabId: tab.id
-    });
-
-    // Send highlights to content script only for non-HN content
-    if (!isHackerNews && highlights.length > 0) {
-      chrome.tabs.sendMessage(tab.id, {
-        action: "highlightContent",
-        highlights: highlights
-      });
-    }
-
-    // Check if we're still on the same tab before displaying
-    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (currentTab.id === tab.id) {
-      displayResult(analysisResult, response.title);
-    }
-    
   } catch (error) {
-    await updateAnalyzingState(urlKey, false, tab.id);
-    
-    // Only display error if we're still on the same tab
-    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (currentTab.id === tab.id) {
-      displayError('Error: ' + error.message);
-    }
-  } finally {
-    // Only update UI state if we're still on the same tab
-    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (currentTab.id === tab.id) {
-      isAnalyzing = false;
-      setLoadingState(false);
-    }
+    // Error handling for getContent or initial setup
+    await updateAnalyzingState(getUrlKey(tab.url), false, tab.id);
+    displayError('Error: ' + error.message);
+    setLoadingState(false); // Ensure loading state is reset
+    isAnalyzing = false; // Ensure analyzing state is reset
   }
 }
 
@@ -691,17 +707,34 @@ async function resetTabState() {
   }
 }
 
+// Helper functions to show and hide modals
+function showModal(modalElement) {
+  if (modalElement) {
+    modalElement.classList.add('visible');
+  }
+}
+
+function hideModal(modalElement) {
+  if (modalElement) {
+    modalElement.classList.remove('visible');
+  }
+}
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize the extension
   initializeExtension();
 
+  const apiKeyModal = document.getElementById('apiKeyModal');
+  const rawContentModal = document.getElementById('rawContentModal');
+  const rawResponseModal = document.getElementById('rawResponseModal');
+
   // Add all event listeners
   document.getElementById('resetTabBtn').addEventListener('click', resetTabState);
   document.getElementById('analyzeBtn').addEventListener('click', analyzeContent);
+  
   document.getElementById('apiKeyBtn').addEventListener('click', () => {
-    const modal = document.getElementById('apiKeyModal');
-    modal.classList.add('visible');
+    showModal(apiKeyModal);
     // Load current API key if exists
     chrome.storage.local.get(['apiKey'], (result) => {
       if (result.apiKey) {
@@ -712,16 +745,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('closeApiKeyBtn').addEventListener('click', () => {
-    document.getElementById('apiKeyModal').classList.remove('visible');
+    hideModal(apiKeyModal);
   });
 
   document.getElementById('saveApiKeyBtn').addEventListener('click', () => {
     saveApiKey();
-    document.getElementById('apiKeyModal').classList.remove('visible');
+    hideModal(apiKeyModal);
   });
 
   document.getElementById('rawContentBtn').addEventListener('click', () => {
-    const modal = document.getElementById('rawContentModal');
     const textDiv = document.getElementById('rawContentText');
     const editDiv = document.getElementById('rawContentEdit');
     
@@ -740,16 +772,14 @@ document.addEventListener('DOMContentLoaded', () => {
       textDiv.textContent = 'No content available';
       document.getElementById('copyContentBtn').style.display = 'none';
     }
-    
-    modal.classList.add('visible');
+    showModal(rawContentModal);
   });
 
   document.getElementById('closeRawContentBtn').addEventListener('click', () => {
-    document.getElementById('rawContentModal').classList.remove('visible');
+    hideModal(rawContentModal);
   });
 
   document.getElementById('rawResponseBtn').addEventListener('click', () => {
-    const modal = document.getElementById('rawResponseModal');
     const textDiv = document.getElementById('rawResponseText');
     
     if (currentRawResponse) {
@@ -759,12 +789,11 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       textDiv.textContent = 'No raw response available. Please run an analysis first.';
     }
-    
-    modal.classList.add('visible');
+    showModal(rawResponseModal);
   });
 
   document.getElementById('closeRawResponseBtn').addEventListener('click', () => {
-    document.getElementById('rawResponseModal').classList.remove('visible');
+    hideModal(rawResponseModal);
   });
 
   document.getElementById('apiKey').addEventListener('input', (e) => {
@@ -791,66 +820,41 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('saveContentBtn').addEventListener('click', async () => {
     const textarea = document.getElementById('rawContentTextarea');
     const newContent = textarea.value.trim();
-    
+
     if (newContent) {
-      currentRawContent = newContent;
+      // Hide editing UI first
       document.getElementById('rawContentText').textContent = newContent;
       document.getElementById('rawContentEdit').style.display = 'none';
       document.getElementById('rawContentText').style.display = 'block';
       document.getElementById('saveContentBtn').style.display = 'none';
       document.getElementById('cancelEditBtn').style.display = 'none';
-      
-      setLoadingState(true);
-      
-      try {
-        const apiKey = document.getElementById('apiKey').value;
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const urlKey = getUrlKey(tab.url);
-        
-        if (!tab) {
-          throw new Error('No active tab found');
-        }
-        
-        await updateAnalyzingState(urlKey, true, tab.id);
-        
-        const isHackerNews = tab.url.includes('news.ycombinator.com');
-        const prompt = isHackerNews ? 
-          HACKERNEWS_PROMPT + '\n\n' + newContent :
-          CRITIC_PROMPT + '\n\n' + newContent;
-        
-        const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews);
-        currentRawResponse = rawResponse;
+      document.getElementById('copyContentBtn').style.display = 'block'; // Show copy button again
 
-        await storeAnalysisResults(urlKey, {
-          content: newContent,
-          title: tab.title,
-          url: tab.url,
-          analysis: analysisResult,
-          rawResponse,
-          highlights: isHackerNews ? [] : highlights,
-          type: isHackerNews ? 'hackernews' : 'generic',
-          tabId: tab.id
-        });
-        
-        const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (currentTab.id === tab.id) {
-          displayResult(analysisResult, tab.title);
-        }
-        
-      } catch (error) {
-        const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (currentTab) {
-          await updateAnalyzingState(getUrlKey(currentTab.url), false, currentTab.id);
-          if (currentTab.id === tab.id) {
-            displayError('Error reanalyzing: ' + error.message);
-          }
-        }
-      } finally {
-        const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (currentTab && currentTab.id === tab.id) {
-          setLoadingState(false);
-        }
+      // Get API key
+      const { apiKey: storedApiKey } = await chrome.storage.local.get(['apiKey']);
+      const inputApiKey = document.getElementById('apiKey').value;
+      const apiKey = storedApiKey || inputApiKey;
+
+      if (!apiKey) {
+        displayError('Please enter your API key to re-analyze');
+        return;
       }
+       // Save the API key if it's from input and different
+      if (inputApiKey && inputApiKey !== storedApiKey) {
+        saveApiKey();
+      }
+
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.url) { // Ensure tab.url exists
+        displayError('Unable to find active tab or tab URL for re-analysis');
+        return;
+      }
+      
+      // Call the consolidated function
+      // Note: response.title might not be available here directly if we don't re-fetch it.
+      // Using tab.title as a fallback or assuming it's current.
+      // For content, we use newContent. For title, using tab.title.
+      await _executeAnalysisAndUpdateUI(newContent, { id: tab.id, url: tab.url, title: tab.title }, apiKey);
     }
   });
 
@@ -882,18 +886,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Close modals when clicking outside
   window.addEventListener('click', (e) => {
-    const apiKeyModal = document.getElementById('apiKeyModal');
-    const rawContentModal = document.getElementById('rawContentModal');
-    const rawResponseModal = document.getElementById('rawResponseModal');
-    
     if (e.target === apiKeyModal) {
-      apiKeyModal.classList.remove('visible');
+      hideModal(apiKeyModal);
     }
     if (e.target === rawContentModal) {
-      rawContentModal.classList.remove('visible');
+      hideModal(rawContentModal);
     }
     if (e.target === rawResponseModal) {
-      rawResponseModal.classList.remove('visible');
+      hideModal(rawResponseModal);
     }
   });
 });

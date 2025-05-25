@@ -1,0 +1,434 @@
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #333;
+  background: #fff;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 100;
+}
+
+.header-left {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.header-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.header-button {
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-button:hover {
+  background: #f5f5f5;
+  border-color: #ccc;
+}
+
+.header-button.primary {
+  background: #007AFF;
+  color: white;
+  border-color: #007AFF;
+}
+
+.header-button.primary:hover {
+  background: #0066CC;
+  border-color: #0066CC;
+}
+
+.header-button svg {
+  width: 14px;
+  height: 14px;
+  opacity: 0.8;
+}
+
+/* Common styles for all modal overlays */
+.modal-overlay {
+  display: none; /* Hidden by default */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5); /* Semi-transparent background */
+  z-index: 1000; /* Ensure modals are on top */
+  align-items: center;
+  justify-content: center;
+}
+
+/* Style to make the modal visible */
+.modal-overlay.visible {
+  display: flex; /* Show the modal */
+}
+
+/* Specific modal content styling - can override or add to common styles if needed */
+.api-key-modal .api-key-content { /* Target content div within api-key-modal */
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+/* .api-key-modal itself doesn't need display, position etc. if .modal-overlay handles it */
+/* .api-key-modal.visible handled by .modal-overlay.visible */
+
+.api-key-content { /* This class is specific to apiKeyModal's content, keeping it */
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.api-key-header {
+  margin-bottom: 16px;
+  font-weight: 600;
+}
+
+.api-key-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  font-family: monospace;
+}
+
+.api-key-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* .raw-content-modal itself doesn't need display, position etc. if .modal-overlay handles it */
+/* .raw-content-modal.visible handled by .modal-overlay.visible */
+
+/* raw-content-content is shared by rawContentModal and rawResponseModal */
+.raw-content-modal .raw-content-content { /* Target content div within raw-content-modal */
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 800px;
+  max-height: 80vh;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+}
+
+.raw-content-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.raw-content-title {
+  font-weight: 600;
+}
+
+.raw-content-body {
+  flex: 1;
+  overflow: auto;
+  background: #f8f9fa;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  padding: 12px;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.raw-content-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eee;
+}
+
+#result {
+  padding: 16px;
+}
+
+.result {
+  background: #fff;
+  border-radius: 4px;
+}
+
+.result.error {
+  color: #dc3545;
+  padding: 12px;
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+}
+
+.loading {
+  padding: 12px;
+  text-align: center;
+  color: #666;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #007AFF;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.article-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.markdown-content {
+  line-height: 1.6;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin: 1.5em 0 0.5em;
+  line-height: 1.3;
+  color: #1a1a1a;
+}
+
+.markdown-content h1 { 
+  font-size: 1.5em; 
+  font-weight: 700;
+  border-bottom: 2px solid #eee;
+  padding-bottom: 0.3em;
+}
+
+.markdown-content h2 { 
+  font-size: 1.3em; 
+  font-weight: 600;
+  color: #007AFF;
+  margin-top: 1.8em;
+  padding-bottom: 0.2em;
+  border-bottom: 1px solid #eee;
+}
+
+.markdown-content h3 { 
+  font-size: 1.2em; 
+  font-weight: 600;
+  color: #2E7D32;
+  margin-top: 1.5em;
+  margin-bottom: 0.8em;
+  padding: 0.3em 0;
+}
+
+.markdown-content h4 { 
+  font-size: 1.1em; 
+  font-weight: 600;
+  color: #666;
+}
+
+.markdown-content p {
+  margin: 0 0 0;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0 0 1em;
+  padding-left: 2em;
+}
+
+.markdown-content li {
+  margin: 0.15em 0;
+  display: list-item;
+}
+
+/* Add styles for nested lists */
+.markdown-content ul ul,
+.markdown-content ol ol,
+.markdown-content ul ol,
+.markdown-content ol ul {
+  margin: 0.15em 0;
+  padding-left: 2em;
+}
+
+/* Ensure list items with nested content maintain proper indentation */
+.markdown-content li > p {
+  margin: 0.15em 0;
+}
+
+.markdown-content li > ul,
+.markdown-content li > ol {
+  margin: 0.15em 0;
+}
+
+/* Style for list items with multiple paragraphs */
+.markdown-content li p {
+  margin: 0.15em 0;
+}
+
+/* Ensure proper spacing between list items with nested content */
+.markdown-content li + li {
+  margin-top: 0.3em;
+}
+
+.markdown-content code {
+  background: #f8f9fa;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.markdown-content pre {
+  background: #f8f9fa;
+  padding: 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+.markdown-content pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown-content blockquote {
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  border-left: 4px solid #ddd;
+  color: #666;
+}
+
+.markdown-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #ddd;
+  padding: 0.5em;
+  text-align: left;
+}
+
+.markdown-content th {
+  background: #f8f9fa;
+  font-weight: 600;
+}
+
+.api-key-status {
+  font-size: 12px;
+  color: #666;
+  margin-top: 4px;
+}
+
+.api-key-status.valid {
+  color: #28a745;
+}
+
+.button-container {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.primary-button {
+  background-color: #007AFF;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.secondary-button {
+  background-color: #f5f5f5;
+  color: #333;
+  border: 1px solid #ddd;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.primary-button:hover {
+  background-color: #0056b3;
+}
+
+.secondary-button:hover {
+  background-color: #e5e5e5;
+}
+
+.action-button {
+  padding: 6px 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f8f9fa;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.action-button:hover {
+  background: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.action-button.copied {
+  background: #28a745;
+  color: white;
+  border-color: #28a745;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
