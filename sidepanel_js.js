@@ -28,7 +28,7 @@ You focus on:
 Ask hard questions like:
 - What breaks this?
 - What's assumed? What are the tradeoffs?
-- What’s a better wedge or leverage?
+- What's a better wedge or leverage?
 - If this is true, what becomes the next constraint?
 
 Tone:
@@ -559,7 +559,7 @@ async function analyzeContent() {
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url) { // Ensure tab.url exists
+  if (!tab || !tab.url) {
     displayError('Unable to find active tab or tab URL');
     return;
   }
@@ -574,37 +574,48 @@ async function analyzeContent() {
   const urlKey = getUrlKey(tab.url);
   await updateAnalyzingState(urlKey, true, tab.id);
 
-
   try {
-    const response = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Timeout: Unable to get page content'));
-      }, 5000);
+    let contentToAnalyze;
+    
+    // If we have currentRawContent (from selection or previous edit), use it
+    if (currentRawContent) {
+      contentToAnalyze = currentRawContent;
+    } else {
+      // Otherwise get content from the page
+      const response = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Timeout: Unable to get page content'));
+        }, 5000);
 
-      chrome.tabs.sendMessage(tab.id, { action: "getContent" }, (msgResponse) => {
-        clearTimeout(timeout);
-        if (chrome.runtime.lastError) {
-          reject(new Error('Content script not ready. Please refresh the page.'));
-          return;
-        }
-        resolve(msgResponse);
+        chrome.tabs.sendMessage(tab.id, { action: "getContent" }, (msgResponse) => {
+          clearTimeout(timeout);
+          if (chrome.runtime.lastError) {
+            reject(new Error('Content script not ready. Please refresh the page.'));
+            return;
+          }
+          resolve(msgResponse);
+        });
       });
-    });
 
-    if (!response || !response.content) {
-      throw new Error('Unable to get page content');
+      if (!response || !response.content) {
+        throw new Error('Unable to get page content');
+      }
+
+      contentToAnalyze = filterHighlights(response.content);
     }
 
-    const cleanContent = filterHighlights(response.content);
-    // Pass necessary tab info to the new function
-    await _executeAnalysisAndUpdateUI(cleanContent, { id: tab.id, url: tab.url, title: response.title }, apiKey);
+    // Pass necessary tab info to the analysis function
+    await _executeAnalysisAndUpdateUI(contentToAnalyze, { 
+      id: tab.id, 
+      url: tab.url, 
+      title: tab.title 
+    }, apiKey);
 
   } catch (error) {
-    // Error handling for getContent or initial setup
     await updateAnalyzingState(getUrlKey(tab.url), false, tab.id);
     displayError('Error: ' + error.message);
-    setLoadingState(false); // Ensure loading state is reset
-    isAnalyzing = false; // Ensure analyzing state is reset
+    setLoadingState(false);
+    isAnalyzing = false;
   }
 }
 
@@ -729,10 +740,103 @@ document.addEventListener('DOMContentLoaded', () => {
   const rawContentModal = document.getElementById('rawContentModal');
   const rawResponseModal = document.getElementById('rawResponseModal');
 
-  // Add all event listeners
+  // Create header buttons container
+  const headerButtonsContainer = document.createElement('div');
+  headerButtonsContainer.className = 'header-buttons-container';
+  headerButtonsContainer.innerHTML = `
+    <button id="resetTabBtn" class="header-button icon-only" title="Reset Analysis">
+      <span class="button-icon">🔄</span>
+    </button>
+    <button id="apiKeyBtn" class="header-button icon-only" title="API Settings">
+      <span class="button-icon">⚙️</span>
+    </button>
+    <button id="rawContentBtn" class="header-button icon-only" title="Raw Content">
+      <span class="button-icon">📄</span>
+    </button>
+    <button id="rawResponseBtn" class="header-button icon-only" title="Raw Response">
+      <span class="button-icon">📋</span>
+    </button>
+  `;
+
+  // Replace the old buttons with the new container
+  const headerRight = document.querySelector('.header-right');
+  const oldButtons = headerRight.querySelectorAll('.header-button');
+  oldButtons.forEach(btn => btn.remove());
+  headerRight.appendChild(headerButtonsContainer);
+
+  // Create analyze buttons container
+  const analyzeButtonsContainer = document.createElement('div');
+  analyzeButtonsContainer.className = 'analyze-buttons-container';
+  analyzeButtonsContainer.innerHTML = `
+    <button id="analyzeBtn" class="header-button">
+      <span class="button-icon">🔍</span>
+      <span class="button-text">Analyze Page</span>
+    </button>
+    <button id="analyzeSelectionBtn" class="header-button">
+      <span class="button-icon">✂️</span>
+      <span class="button-text">Analyze Selection</span>
+    </button>
+  `;
+
+  // Insert analyze buttons at the top of the content area
+  const contentArea = document.querySelector('#result').parentNode;
+  contentArea.insertBefore(analyzeButtonsContainer, document.querySelector('#result'));
+
+  // Add click handlers for all buttons
   document.getElementById('resetTabBtn').addEventListener('click', resetTabState);
   document.getElementById('analyzeBtn').addEventListener('click', analyzeContent);
-  
+  document.getElementById('analyzeSelectionBtn').addEventListener('click', async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) {
+        throw new Error('No active tab found');
+      }
+
+      // Request selected text from content script
+      const response = await chrome.tabs.sendMessage(tab.id, { action: "getSelectedText" });
+      
+      if (!response || !response.selectedText) {
+        throw new Error('No text selected on the page');
+      }
+
+      const selectedText = response.selectedText.trim();
+      if (selectedText.length === 0) {
+        throw new Error('Selected text is empty');
+      }
+
+      // Update currentRawContent with the selection
+      currentRawContent = selectedText;
+      
+      // Update token info display
+      const tokenInfo = document.getElementById('rawContentTokenInfo');
+      tokenInfo.textContent = computeTokenInfo(currentRawContent).displayText;
+
+      // Show success message
+      const button = document.getElementById('analyzeSelectionBtn');
+      const originalText = button.querySelector('.button-text').textContent;
+      button.querySelector('.button-text').textContent = 'Selection Captured!';
+      button.classList.add('success');
+      
+      setTimeout(() => {
+        button.querySelector('.button-text').textContent = originalText;
+        button.classList.remove('success');
+      }, 2000);
+
+      // Start analysis immediately
+      await analyzeContent();
+
+    } catch (error) {
+      console.error('Error analyzing selection:', error);
+      displayError('Error: ' + error.message);
+    }
+  });
+
+  // Hide the translate button
+  const translateBtn = document.getElementById('translateBtn');
+  if (translateBtn) {
+    translateBtn.style.display = 'none';
+  }
+
   document.getElementById('apiKeyBtn').addEventListener('click', () => {
     showModal(apiKeyModal);
     // Load current API key if exists
@@ -1429,7 +1533,7 @@ const TranslationModule = (function() {
   
   // Initialize the translation module
   function initialize() {
-    addTranslationButton();
+    //addTranslationButton();
   }
   
   return {

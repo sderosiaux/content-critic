@@ -477,6 +477,13 @@
       });
       translatedNodes.clear();
       sendResponse({ success: true });
+    } else if (request.action === "getSelectedText") {
+      // Get the current selection
+      const selection = window.getSelection();
+      const selectedText = selection.toString().trim();
+      
+      // Send back the selected text
+      sendResponse({ selectedText });
     }
     
     return true; // Keep the message channel open for async responses
