@@ -89,222 +89,242 @@
     return tooltip;
   }
 
-  // Helper function to create a highlight span with tooltip listeners
-  function _createHighlightSpan(text, type, tooltip) {
-    const span = document.createElement('span');
-    span.className = `content-critic-highlight ${type}`;
-    span.textContent = text;
+  // Function to create a highlight box
+  function createHighlightBox(rect, type, tooltip) {
+    const box = document.createElement('div');
+    box.className = `content-critic-highlight-box ${type}`;
+    box.style.position = 'absolute';
+    box.style.left = `${rect.left + window.scrollX}px`;
+    box.style.top = `${rect.top + window.scrollY}px`;
+    box.style.width = `${rect.width}px`;
+    box.style.height = `${rect.height}px`;
+    box.style.zIndex = '2147483646';
 
-    span.addEventListener('mouseenter', () => {
-      const rect = span.getBoundingClientRect();
-      positionTooltip(tooltip, rect);
+    // Add hover effect with a small delay to prevent flickering
+    let hoverTimeout;
+    box.addEventListener('mouseenter', () => {
+      clearTimeout(hoverTimeout);
+      const boxRect = box.getBoundingClientRect();
+      positionTooltip(tooltip, boxRect);
+      tooltip.style.display = 'block'; // Ensure tooltip is visible
+      requestAnimationFrame(() => {
+        tooltip.classList.add('visible');
+      });
+    });
+
+    box.addEventListener('mouseleave', () => {
+      hoverTimeout = setTimeout(() => {
+        tooltip.classList.remove('visible');
+        // Hide tooltip after transition
+        tooltip.addEventListener('transitionend', () => {
+          if (!tooltip.classList.contains('visible')) {
+            tooltip.style.display = 'none';
+          }
+        }, { once: true });
+      }, 100);
+    });
+
+    // Also handle tooltip hover
+    tooltip.addEventListener('mouseenter', () => {
+      clearTimeout(hoverTimeout);
       tooltip.classList.add('visible');
     });
 
-    span.addEventListener('mouseleave', () => {
-      tooltip.classList.remove('visible');
+    tooltip.addEventListener('mouseleave', () => {
+      hoverTimeout = setTimeout(() => {
+        tooltip.classList.remove('visible');
+        tooltip.addEventListener('transitionend', () => {
+          if (!tooltip.classList.contains('visible')) {
+            tooltip.style.display = 'none';
+          }
+        }, { once: true });
+      }, 100);
     });
-    return span;
+
+    return box;
   }
 
-  // Function to normalize text (remove extra spaces and HTML tags)
-  function normalizeText(str) {
-    if (!str) return '';
-    // First remove HTML comments, including multi-line comments
-    str = str.replace(/<!--[\s\S]*?-->/g, '');
-    // Then remove HTML tags but preserve their content (keeping original behavior)
-    str = str.replace(/<[^>]*>/g, '');
-    // Replace multiple spaces, newlines, tabs with a single space
-    str = str.replace(/\s+/g, ' ');
-    // Remove leading/trailing whitespace
-    return str.trim();
+  // Function to get text node rectangles
+  function getTextNodeRects(node) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const rects = Array.from(range.getClientRects());
+    return rects;
   }
 
-  // Helper to find start and end nodes for a given search text within a list of a block's text nodes.
-  // This function attempts to replicate the original logic of finding the start and end Text Nodes
-  // that encapsulate the normalizedSearchText within a sequence of sibling Text Nodes.
-  function _findMatchingNodesInBlock(blockChildNodes, normalizedSearchText) {
-    let startNode = null;
-    let endNode = null;
+  // Function to update highlight positions
+  function updateHighlightPositions() {
+    const container = document.getElementById('content-critic-highlights');
+    if (!container) return;
+    
+    const boxes = container.querySelectorAll('.content-critic-highlight-box');
+    boxes.forEach(box => {
+      // Find the original text node that this highlight corresponds to
+      const text = box.getAttribute('data-highlight-text');
+      if (!text) return;
 
-    // Map child nodes to their normalized text content.
-    const nodeMetas = blockChildNodes.map(node => ({
-      node,
-      normText: normalizeText(node.textContent) 
-    }));
-
-    // Accumulate normalized text from nodes and check for search text.
-    // This mirrors the original logic's approach to determine potential matches.
-    let currentTextForSearch = ''; 
-    for (let i = 0; i < nodeMetas.length; i++) {
-      // Concatenate normalized texts, adding a space in between, then normalize the whole string.
-      // This is crucial to match how normalizedSearchText might span across multiple nodes.
-      currentTextForSearch += (i > 0 ? " " : "") + nodeMetas[i].normText;
-      const normalizedAccumulated = normalizeText(currentTextForSearch);
-
-      // Determine startNode:
-      // If startNode is not yet found and the accumulated text contains the search text.
-      if (!startNode && normalizedAccumulated.includes(normalizedSearchText)) {
-        // The match might start in an earlier node than nodeMetas[i].
-        // Iterate backwards from the current node (i) to find the actual first node
-        // whose content contributes to the found normalizedSearchText.
-        let tempAccumulatedForStartFinding = "";
-        for (let j = i; j >= 0; j--) {
-          // Prepend node's text to tempAccumulatedForStartFinding
-          tempAccumulatedForStartFinding = nodeMetas[j].normText + (tempAccumulatedForStartFinding ? " " : "") + tempAccumulatedForStartFinding;
-          if (normalizeText(tempAccumulatedForStartFinding).includes(normalizedSearchText)) {
-            startNode = nodeMetas[j].node; // This node is part of the match.
-          } else {
-            // The text up to nodeMetas[j] (exclusive) no longer forms the match.
-            // So, the actual start must have been nodeMetas[j+1].node.
-            // Since we set `startNode` in the previous iteration, it will hold the correct starting node.
-            break; 
-          }
-        }
-      }
-
-      // Determine endNode:
-      // If startNode has been found and endNode is not yet found.
-      if (startNode && !endNode) {
-        // The original logic used a length-based check on the accumulated string to find the end node.
-        // This ensures that the entire `normalizedSearchText` is covered.
-        const startIndexInAccumulated = normalizedAccumulated.indexOf(normalizedSearchText);
-        if (startIndexInAccumulated !== -1) { 
-          const effectiveSearchTextEndIndex = startIndexInAccumulated + normalizedSearchText.length;
-          
-          // Reconstruct accumulated text again, node by node, checking total length.
-          // This is to find which node (nodeMetas[k]) makes the accumulated length
-          // meet or exceed `effectiveSearchTextEndIndex`.
-          let runningTextForLengthCheck = "";
-          for (let k = 0; k < nodeMetas.length; k++) { // Iterate from the beginning of the block's nodes
-            runningTextForLengthCheck += (k > 0 ? " " : "") + nodeMetas[k].normText;
-            const currentNormalizedLength = normalizeText(runningTextForLengthCheck).length;
-            
-            if (currentNormalizedLength >= effectiveSearchTextEndIndex) {
-              endNode = nodeMetas[k].node;
-              break; // Found the end node.
+      // Find all text nodes that might contain this text
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode: function(node) {
+            if (!node.parentElement ||
+                node.parentElement.closest('script, style, noscript, .content-critic-highlight-box')) {
+              return NodeFilter.FILTER_REJECT;
             }
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        },
+        false
+      );
+
+      let node;
+      let found = false;
+      while (node = walker.nextNode()) {
+        const nodeText = normalizeText(node.textContent);
+        if (nodeText.includes(normalizeText(text))) {
+          // Create a range for the specific text
+          const startIndex = nodeText.indexOf(normalizeText(text));
+          const endIndex = startIndex + normalizeText(text).length;
+          
+          const range = document.createRange();
+          range.setStart(node, startIndex);
+          range.setEnd(node, endIndex);
+          
+          // Get the new rectangles for this range
+          const rects = Array.from(range.getClientRects());
+          if (rects.length > 0) {
+            // Update the highlight box position
+            const rect = rects[0]; // Use the first rectangle
+            box.style.left = `${rect.left + window.scrollX}px`;
+            box.style.top = `${rect.top + window.scrollY}px`;
+            box.style.width = `${rect.width}px`;
+            box.style.height = `${rect.height}px`;
+            found = true;
+            break;
           }
         }
       }
-      
-      // If both start and end nodes are determined, no need to check further nodes in this block.
-      if (startNode && endNode) {
-        break;
+
+      // If we couldn't find the text anymore, hide the highlight
+      if (!found) {
+        box.style.display = 'none';
+      } else {
+        box.style.display = 'block';
       }
-    }
-    return { startNode, endNode };
+    });
   }
 
-  // Highlight text in the page
+  // Function to normalize text for comparison
+  function normalizeText(text) {
+    if (!text) return '';
+    
+    // Remove HTML comments
+    text = text.replace(/<!--[\s\S]*?-->/g, '');
+    
+    // Remove HTML tags but keep their content
+    text = text.replace(/<[^>]+>/g, ' ');
+    
+    // Normalize whitespace
+    text = text.replace(/\s+/g, ' ').trim();
+    
+    return text;
+  }
+
+  // Function to highlight text using absolute positioned boxes
   function highlightText(text, type, explanation, suggestion) {
     console.log('Highlighting text:', {
-      text: text.substring(0, 50) + '...', // Original text for logging
+      text: text.substring(0, 50) + '...',
       type,
       explanation,
       suggestion
     });
 
-    const tooltip = createTooltip(text, type, explanation, suggestion); // Tooltip uses original text
+    const tooltip = createTooltip(text, type, explanation, suggestion);
     let highlightCount = 0;
-    const normalizedSearchText = normalizeText(text); // Normalized text for matching
+    const normalizedSearchText = normalizeText(text);
 
-    // If the text to search for becomes empty after normalization (e.g., it was just whitespace or empty tags),
-    // then there's nothing to highlight.
     if (!normalizedSearchText) {
       console.warn("Normalized search text is empty, skipping highlighting. Original text:", text);
       return;
     }
 
-    // TreeWalker to find all relevant text nodes in the document body.
+    // Create a container for all highlight boxes if it doesn't exist
+    let highlightContainer = document.getElementById('content-critic-highlights');
+    if (!highlightContainer) {
+      highlightContainer = document.createElement('div');
+      highlightContainer.id = 'content-critic-highlights';
+      highlightContainer.style.position = 'absolute';
+      highlightContainer.style.top = '0';
+      highlightContainer.style.left = '0';
+      highlightContainer.style.width = '100%';
+      highlightContainer.style.height = '100%';
+      highlightContainer.style.pointerEvents = 'none';
+      highlightContainer.style.zIndex = '2147483646';
+      document.body.appendChild(highlightContainer);
+
+      // Set up ResizeObserver to watch for content changes
+      const resizeObserver = new ResizeObserver(() => {
+        updateHighlightPositions();
+      });
+
+      // Observe the body and any dynamic content containers
+      resizeObserver.observe(document.body);
+      document.querySelectorAll('main, article, .content, #content, [role="main"]').forEach(el => {
+        resizeObserver.observe(el);
+      });
+
+      // Store the observer for cleanup
+      highlightContainer._resizeObserver = resizeObserver;
+    }
+
+    // Process each text node
     const walker = document.createTreeWalker(
       document.body,
-      NodeFilter.SHOW_TEXT, // Only interested in text nodes.
+      NodeFilter.SHOW_TEXT,
       {
         acceptNode: function(node) {
-          // Reject nodes if their parent is a script, style, noscript tag, or already a highlight span.
-          // This prevents processing content of these elements or re-processing already highlighted text.
           if (!node.parentElement ||
-              node.parentElement.closest('script, style, noscript, .content-critic-highlight')) {
+              node.parentElement.closest('script, style, noscript, .content-critic-highlight-box')) {
             return NodeFilter.FILTER_REJECT;
           }
-          // Reject nodes that are empty or contain only whitespace after normalization.
           if (!node.textContent || normalizeText(node.textContent).length === 0) {
             return NodeFilter.FILTER_REJECT;
           }
-          return NodeFilter.FILTER_ACCEPT; // Accept the node if it passes checks.
+          return NodeFilter.FILTER_ACCEPT;
         }
       },
-      false // Not using entity reference expansion.
+      false
     );
 
-    const textNodes = [];
     let node;
     while (node = walker.nextNode()) {
-      textNodes.push(node); // Collect all acceptable text nodes.
-    }
-
-    // Group collected text nodes by their closest common block-level ancestor.
-    // This helps process the document in logical chunks.
-    const blocks = new Map(); // Map where key is block element, value is array of its text node children.
-    for (const textNode of textNodes) {
-      // Define common block-level elements.
-      const blockElement = textNode.parentElement.closest('p, div, article, section, main, aside, nav, header, footer, li, td, th, h1, h2, h3, h4, h5, h6');
-      if (blockElement) {
-        // Optimization: If the block's entire normalized text content doesn't include the search text,
-        // then this block can be skipped early.
-        if (!normalizeText(blockElement.textContent).includes(normalizedSearchText)) {
-            continue;
-        }
-        // If this block hasn't been added to the map, initialize it.
-        if (!blocks.has(blockElement)) {
-          blocks.set(blockElement, []);
-        }
-        // Add the text node to its corresponding block.
-        blocks.get(blockElement).push(textNode);
-      }
-    }
-    
-    // Process each block that potentially contains the search text.
-    for (const [block, blockChildNodes] of blocks) {
-      // Due to the previous optimization, this check might be redundant but serves as a safeguard.
-      // It ensures that the combined text of specifically collected child nodes (not blockElement.textContent) contains the search text.
-      const blockCombinedTextNormalized = normalizeText(blockChildNodes.map(n => n.textContent).join(" "));
-      if (!blockCombinedTextNormalized.includes(normalizedSearchText)) {
-          continue;
-      }
-
-      // Find the specific start and end nodes within this block that contain the search text.
-      const { startNode, endNode } = _findMatchingNodesInBlock(blockChildNodes, normalizedSearchText);
-
-      // If a valid start and end node range is not found, skip this block.
-      if (!startNode || !endNode) {
-        continue;
-      }
+      const nodeText = node.textContent;
+      const normalizedNodeText = normalizeText(nodeText);
       
-      const fragment = document.createDocumentFragment();
-      let isHighlighting = false;
-      for (const currentNode of blockChildNodes) {
-        if (currentNode === startNode) {
-          isHighlighting = true;
-        }
+      if (normalizedNodeText.includes(normalizedSearchText)) {
+        const startIndex = normalizedNodeText.indexOf(normalizedSearchText);
+        const endIndex = startIndex + normalizedSearchText.length;
         
-        if (isHighlighting) {
-          fragment.appendChild(_createHighlightSpan(currentNode.textContent, type, tooltip));
+        const range = document.createRange();
+        range.setStart(node, startIndex);
+        range.setEnd(node, endIndex);
+        
+        const rects = Array.from(range.getClientRects());
+        
+        rects.forEach(rect => {
+          const box = createHighlightBox(rect, type, tooltip);
+          // Store the original text for later repositioning
+          box.setAttribute('data-highlight-text', text);
+          highlightContainer.appendChild(box);
           highlightCount++;
-        } else {
-          fragment.appendChild(currentNode.cloneNode(true));
-        }
-
-        if (currentNode === endNode) {
-          isHighlighting = false;
-          // If there are more nodes in blockChildNodes after endNode, they will be appended as clones.
-        }
+        });
       }
-      
-      block.innerHTML = ''; // Clear original content of the block
-      block.appendChild(fragment); // Append the new content with highlights
     }
+
+    // Add scroll listener to update box positions
+    window.addEventListener('scroll', updateHighlightPositions);
 
     console.log(`Highlighting complete:`, {
       text: text.substring(0, 50) + '...',
@@ -317,13 +337,18 @@
     }
   }
 
-  // Remove all highlights
+  // Function to remove all highlights
   function removeHighlights() {
-    document.querySelectorAll('.content-critic-highlight').forEach(el => {
-      const parent = el.parentNode;
-      parent.replaceChild(document.createTextNode(el.textContent), el);
-    });
+    const container = document.getElementById('content-critic-highlights');
+    if (container) {
+      // Clean up ResizeObserver
+      if (container._resizeObserver) {
+        container._resizeObserver.disconnect();
+      }
+      container.remove();
+    }
     document.querySelectorAll('.content-critic-tooltip').forEach(el => el.remove());
+    window.removeEventListener('scroll', updateHighlightPositions);
   }
 
   // Fonction pour extraire le contenu

@@ -61,6 +61,7 @@ CRITICAL RULES:
 8. DO NOT wrap markdown tables or headers in \`\`\`markdown\`\`\` or any other code block markers
 9. DO NOT USE ANY OTHER TYPE for HIGHLIGHTS. Only fluff|fallacy|assumption|contradiction|inconsistency are valid.
 
+Your answer must be in FRENCH.
 Please analyze and critique the following content:`;
 
 const HACKERNEWS_PROMPT = `Please provide a synthesis of the most important, opinionated, and surprising feedback from the HackerNews comments below. Additionally, you should highlight visionary ideas, mentions of competitors, identified opportunities, and raised challenges from the comments. 
@@ -79,6 +80,7 @@ Don't add comments before and after your analysis.
 Answer using the markdown format only, using #, ##, ### for headers.
 Each opinion should be a subtitle followed by some explanation.
 
+Your answer must be in FRENCH.
 Here are the HackerNews comments to analyze:`;
 
 const TRANSLATION_PROMPT = `You are a translator. Return a JSON object of French translations.
