@@ -51,15 +51,14 @@ Output rules: return ONLY a valid JSON object like this:
 }
 
 CRITICAL RULES:
-1. Return ONLY the JSON object, with no other text
+1. Return ONLY the JSON object, with no other text, it must be valid and complete
 2. Do not include any markdown formatting outside of the JSON
 3. Do not include any explanations or notes outside of the JSON
-4. The JSON must be valid and complete
-5. Each highlight's "text" field must be an exact quote from the content
+5. Each highlight's "text" field must be an EXACT quote from the content, NOT altered, NOT paraphrased, NOT summarized, NOT changed in any way.
 6. Do not put your analysis in the "text" field - use the "explanation" field instead
 7. Please generate minimum 5 and maximum 15 highlights. The more the better.
 8. DO NOT wrap markdown tables or headers in \`\`\`markdown\`\`\` or any other code block markers
-9. DO NOT USE ANY OTHER TYPE for HIGHLIGHTS. Only fluff|fallacy|assumption|contradiction|inconsistency are valid.
+9. Highlight types MUST only be one of: fluff|fallacy|assumption|contradiction|inconsistency.
 
 Your answer must be in FRENCH.
 Please analyze and critique the following content:`;
@@ -889,7 +888,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const textDiv = document.getElementById('rawResponseText');
     
     if (currentRawResponse) {
-      textDiv.textContent = currentRawResponse;
+      try {
+        // Try to parse and format the JSON
+        const jsonResponse = JSON.parse(currentRawResponse);
+        textDiv.textContent = JSON.stringify(jsonResponse, null, 2);
+      } catch (e) {
+        // If it's not valid JSON, display as is
+        textDiv.textContent = currentRawResponse;
+      }
       const tokenInfo = document.getElementById('rawResponseTokenInfo');
       tokenInfo.textContent = computeTokenInfo(currentRawResponse).displayText;
     } else {
