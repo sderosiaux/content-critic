@@ -1,11 +1,11 @@
 body {
   margin: 0;
-  padding: 0;
+  padding: 16px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.5;
   color: #333;
-  background: #fff;
+  background-color: #fff;
 }
 
 .header {
@@ -35,25 +35,30 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
+  margin-bottom: 16px;
 }
 
 .header-button {
-  padding: 6px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: #fff;
-  color: #666;
-  font-size: 13px;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background-color: #f8f9fa;
+  color: #333;
   cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .header-button:hover {
-  background: #f5f5f5;
-  border-color: #ccc;
+  background-color: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.header-button:active {
+  background-color: #dee2e6;
+  transform: translateY(1px);
 }
 
 .header-button.primary {
@@ -74,8 +79,10 @@ body {
 }
 
 .header-button.icon-only {
-  padding: 6px;
+  padding: 8px;
   min-width: 32px;
+  display: flex;
+  align-items: center;
   justify-content: center;
 }
 
@@ -87,27 +94,28 @@ body {
   background: #f5f5f5;
 }
 
-/* Common styles for all modal overlays */
+/* Common modal styles */
 .modal-overlay {
-  display: none; /* Hidden by default */
+  display: none;
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5); /* Semi-transparent background */
-  z-index: 1000; /* Ensure modals are on top */
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
   align-items: center;
   justify-content: center;
 }
 
-/* Style to make the modal visible */
 .modal-overlay.visible {
-  display: flex; /* Show the modal */
+  display: flex;
 }
 
-/* Specific modal content styling - can override or add to common styles if needed */
-.api-key-modal .api-key-content { /* Target content div within api-key-modal */
+/* Base modal content styles */
+.modal-content,
+.api-key-content,
+.raw-content-content {
   background: white;
   padding: 20px;
   border-radius: 8px;
@@ -115,16 +123,12 @@ body {
   max-width: 400px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
-/* .api-key-modal itself doesn't need display, position etc. if .modal-overlay handles it */
-/* .api-key-modal.visible handled by .modal-overlay.visible */
 
-.api-key-content { /* This class is specific to apiKeyModal's content, keeping it */
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  width: 90%;
-  max-width: 400px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.raw-content-content {
+  max-width: 800px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .api-key-header {
@@ -145,22 +149,6 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-
-/* .raw-content-modal itself doesn't need display, position etc. if .modal-overlay handles it */
-/* .raw-content-modal.visible handled by .modal-overlay.visible */
-
-/* raw-content-content is shared by rawContentModal and rawResponseModal */
-.raw-content-modal .raw-content-content { /* Target content div within raw-content-modal */
-  background: white;
-  padding: 20px;
-  border-radius: 8px;
-  width: 90%;
-  max-width: 800px;
-  max-height: 80vh;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  display: flex;
-  flex-direction: column;
 }
 
 .raw-content-header {
@@ -456,56 +444,394 @@ body {
 .analyze-buttons-container {
   display: flex;
   gap: 12px;
-  margin: 16px;
-  padding: 0 16px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
 }
 
 .analyze-buttons-container .header-button {
   flex: 1;
   min-width: 0;
-  padding: 10px 16px;
-  font-weight: 500;
-  font-size: 14px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #f8f9fa;
-  color: #333;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Dark theme styles */
+@media (prefers-color-scheme: dark) {
+  body {
+    color: #e0e0e0;
+    background-color: #1a1a1a;
+  }
+
+  .header {
+    background-color: #1a1a1a;
+    border-bottom-color: #404040;
+  }
+
+  .header-left {
+    color: #e0e0e0;
+  }
+
+  .result {
+    background-color: #2d2d2d;
+    border-color: #404040;
+  }
+
+  .result.error {
+    background-color: rgba(220, 53, 69, 0.1);
+    border-color: #dc3545;
+    color: #ff6b6b;
+  }
+
+  .loading {
+    color: #999;
+  }
+
+  .article-title {
+    color: #e0e0e0;
+    border-bottom-color: #404040;
+  }
+
+  .markdown-content {
+    color: #e0e0e0;
+  }
+
+  .markdown-content h1,
+  .markdown-content h2,
+  .markdown-content h3,
+  .markdown-content h4 {
+    color: #e0e0e0;
+  }
+
+  .markdown-content h1 {
+    border-bottom-color: #404040;
+  }
+
+  .markdown-content h2 {
+    color: #64b5f6;
+    border-bottom-color: #404040;
+  }
+
+  .markdown-content h3 {
+    color: #81c784;
+  }
+
+  .markdown-content h4 {
+    color: #bdbdbd;
+  }
+
+  .markdown-content code {
+    background-color: #2d2d2d;
+    color: #e0e0e0;
+  }
+
+  .markdown-content pre {
+    background-color: #2d2d2d;
+    border-color: #404040;
+  }
+
+  .markdown-content blockquote {
+    border-left-color: #404040;
+    color: #bdbdbd;
+  }
+
+  .markdown-content table {
+    border-color: #404040;
+  }
+
+  .markdown-content th,
+  .markdown-content td {
+    border-color: #404040;
+  }
+
+  .markdown-content th {
+    background-color: #2d2d2d;
+  }
+
+  .api-key-content,
+  .raw-content-content {
+    background-color: #2d2d2d;
+    border-color: #404040;
+  }
+
+  .raw-content-header {
+    border-bottom-color: #404040;
+  }
+
+  .raw-content-body {
+    background-color: #1a1a1a;
+    border-color: #404040;
+    color: #e0e0e0;
+  }
+
+  .raw-content-actions {
+    border-top-color: #404040;
+  }
+
+  .api-key-status {
+    color: #999;
+  }
+
+  .api-key-status.valid {
+    color: #81c784;
+  }
+
+  .primary-button {
+    background-color: #007AFF;
+    color: white;
+  }
+
+  .primary-button:hover {
+    background-color: #0056b3;
+  }
+
+  .secondary-button {
+    background-color: #2d2d2d;
+    color: #e0e0e0;
+    border-color: #404040;
+  }
+
+  .secondary-button:hover {
+    background-color: #363636;
+  }
+
+  .action-button {
+    background-color: #2d2d2d;
+    color: #e0e0e0;
+    border-color: #404040;
+  }
+
+  .action-button:hover {
+    background-color: #363636;
+    border-color: #4d4d4d;
+  }
+
+  .action-button.copied {
+    background-color: #28a745;
+    color: white;
+    border-color: #28a745;
+  }
+
+  .header-button {
+    background-color: #2d2d2d;
+    border-color: #404040;
+    color: #e0e0e0;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+
+  .header-button:hover {
+    background-color: #363636;
+    border-color: #4d4d4d;
+  }
+
+  .header-button:active {
+    background-color: #404040;
+  }
+
+  .analyze-buttons-container {
+    background-color: #2d2d2d;
+    border-color: #404040;
+  }
+
+  /* Unified modal content styles for dark theme */
+  .modal-content,
+  .api-key-content,
+  .raw-content-content,
+  .modal {
+    background-color: #2d2d2d !important;
+    border: 1px solid #404040;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    color: #e0e0e0;
+  }
+
+  .modal-header,
+  .raw-content-header {
+    border-bottom-color: #404040;
+  }
+
+  .modal-title,
+  .raw-content-title,
+  .api-key-header {
+    color: #e0e0e0;
+  }
+
+  .modal-close {
+    color: #e0e0e0;
+  }
+
+  .modal-close:hover {
+    background-color: #363636;
+  }
+
+  .modal-body,
+  .raw-content-body {
+    background-color: #1a1a1a;
+    border-color: #404040;
+    color: #e0e0e0;
+  }
+
+  .modal-footer,
+  .raw-content-actions {
+    border-top-color: #404040;
+  }
+
+  .api-key-input {
+    background-color: #1a1a1a;
+    border-color: #404040;
+    color: #e0e0e0;
+  }
+
+  .api-key-input:focus {
+    border-color: #666;
+    box-shadow: 0 0 0 2px rgba(102, 102, 102, 0.2);
+  }
+
+  .modal-overlay {
+    background: rgba(0, 0, 0, 0.7);
+  }
+
+  .status-message {
+    background-color: #2d2d2d;
+    border-color: #404040;
+  }
+
+  .status-message.success {
+    background-color: rgba(40, 167, 69, 0.1);
+    border-color: #28a745;
+  }
+
+  .status-message.error {
+    background-color: rgba(220, 53, 69, 0.1);
+    border-color: #dc3545;
+  }
+
+  .loading-spinner {
+    border-color: #404040;
+    border-top-color: #666;
+  }
+}
+
+/* Remove any duplicate modal styles */
+.modal {
+  display: none;
+}
+
+.modal.visible {
+  display: flex;
+}
+
+.modal-content {
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: 90%;
+  max-width: 600px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  padding: 16px;
+  border-bottom: 1px solid #eee;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px;
+  color: #666;
+  border-radius: 4px;
+}
+
+.modal-close:hover {
+  background-color: #f0f0f0;
+}
+
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.modal-footer {
+  padding: 16px;
+  border-top: 1px solid #eee;
+  display: flex;
+  justify-content: flex-end;
   gap: 8px;
 }
 
-.analyze-buttons-container .header-button:hover {
-  background: #e9ecef;
-  border-color: #adb5bd;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+/* Token info styles */
+.token-info {
+  background-color: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
 }
 
-.analyze-buttons-container .header-button:active {
-  background: #dee2e6;
-  border-color: #adb5bd;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
-  transform: translateY(1px);
+.token-info-label {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 4px;
 }
 
-.analyze-buttons-container .header-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  background: #f8f9fa;
-  border-color: #dee2e6;
-  box-shadow: none;
+.token-info-value {
+  font-family: monospace;
+  word-break: break-all;
 }
 
-.analyze-buttons-container .header-button .button-icon {
-  font-size: 16px;
-  opacity: 0.9;
+/* Status message styles */
+.status-message {
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  display: none;
 }
 
-.analyze-buttons-container .header-button .button-text {
-  font-weight: 500;
-  letter-spacing: -0.01em;
+.status-message.visible {
+  display: block;
+}
+
+.status-message.success {
+  background-color: #d4edda;
+  border: 1px solid #c3e6cb;
+  color: #155724;
+}
+
+.status-message.error {
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+  color: #721c24;
+}
+
+/* Loading spinner */
+.loading-spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }

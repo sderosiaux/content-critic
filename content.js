@@ -110,9 +110,14 @@
   // Function to normalize text (remove extra spaces and HTML tags)
   function normalizeText(str) {
     if (!str) return '';
-    return str.replace(/<[^>]*>/g, '') // Remove HTML tags from string if any (though textContent shouldn't have them)
-              .replace(/\s+/g, ' ')     // Normalize multiple spaces, newlines, tabs to a single space
-              .trim();                  // Remove leading/trailing whitespace
+    // First remove HTML comments, including multi-line comments
+    str = str.replace(/<!--[\s\S]*?-->/g, '');
+    // Then remove HTML tags but preserve their content (keeping original behavior)
+    str = str.replace(/<[^>]*>/g, '');
+    // Replace multiple spaces, newlines, tabs with a single space
+    str = str.replace(/\s+/g, ' ');
+    // Remove leading/trailing whitespace
+    return str.trim();
   }
 
   // Helper to find start and end nodes for a given search text within a list of a block's text nodes.
