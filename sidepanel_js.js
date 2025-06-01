@@ -3,6 +3,7 @@ import {
   PromptFactory,
   TranslationPrompt
 } from './prompts.js';
+import { ApiClientFactory } from './api_client.js';
 
 let currentTabId = null;
 let isAnalyzing = false;  // Add state tracking for analysis
@@ -182,157 +183,6 @@ function validateCriticResponse(result) {
   return true;
 }
 
-// Helper function to call Claude API
-async function _callClaudeApi(apiKey, prompt, isHackerNews) {
-  const requestBody = {
-    model: prompt.model || 'claude-3-sonnet-20240229',
-    max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
-    messages: [{
-      role: 'user',
-      content: prompt
-    }]
-  };
-  console.log('Claude API request:', requestBody);
-
-  const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify(requestBody)
-  });
-
-  const data = await apiResponse.json();
-
-  if (data.error) {
-    throw new Error(data.error.message);
-  }
-
-  const rawResponse = data.content[0].text;
-  let analysisResult;
-  let highlights = [];
-
-  if (isHackerNews) {
-    analysisResult = rawResponse;
-  } else {
-    // For Claude, the response is expected to be a JSON object for CRITIC tasks
-    // The validation will happen in the main makeApiCall function
-    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      // We parse it here to extract highlights, but validation is separate
-      const parsedResult = JSON.parse(jsonMatch[0]);
-      analysisResult = parsedResult; // Store the parsed object
-      highlights = parsedResult.highlights || [];
-    } else {
-      throw new Error('No valid JSON object found in Claude response for CRITIC task');
-    }
-  }
-  return { analysisResult, highlights, rawResponse };
-}
-
-// Helper function to call OpenAI API
-async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation, isSuggestion = false) {
-  console.log('OpenAI task detection:', {
-    isTranslation,
-    isHackerNews,
-    isSuggestion,
-    promptStart: typeof prompt === 'string' ? prompt.substring(0, 50) : 'object prompt',
-    translationPromptStart: isTranslation ? prompt.substring(0, 50) : undefined
-  });
-
-  // DO NOT CHANGE THE MODELS USED HERE
-  const model = isTranslation ? 'gpt-4.1-mini' : 'o4-mini'; // 'gpt-4o';
-  const maxTokens = isTranslation ? MAX_TOKENS_TRANSLATION : (isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR);
-
-  const messages = isTranslation ? [
-    {
-      role: 'system',
-      content: 'You are a translator. You MUST return a valid JSON object of translations. Do not include any other text in your response.'
-    },
-    {
-      role: 'user',
-      content: prompt
-    }
-  ] : [
-    {
-      role: 'user',
-      content: prompt
-    }
-  ];
-
-  const requestBody = {
-    model: model,
-    messages: messages,
-    response_format: isTranslation ? { type: "json_object" } : undefined
-  };
-  console.log('OpenAI API request:', requestBody);
-
-  const apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(requestBody)
-  });
-
-  const data = await apiResponse.json();
-      
-  if (data.error) {
-    throw new Error(data.error.message);
-  }
-      
-  const rawResponse = data.choices[0].message.content;
-  let analysisResult;
-  let highlights = [];
-
-  if (isHackerNews) {
-    analysisResult = rawResponse;
-  } else if (isTranslation) {
-    // For translations, we expect a JSON object
-    try {
-      const translations = JSON.parse(rawResponse);
-      if (typeof translations !== 'object' || Array.isArray(translations)) {
-        throw new Error('Response is not a JSON object');
-      }
-      // Filter out invalid translations - this is specific to translation logic
-      const validTranslations = Object.entries(translations)
-        .filter(([key, value]) =>
-          key.startsWith('t') &&
-          typeof value === 'string'
-        )
-        .map(([key, value]) => ({ [key]: value }));
-
-      if (validTranslations.length === 0) {
-        throw new Error('No valid translations found');
-      }
-      // For translations, the main makeApiCall expects only rawResponse
-      return { rawResponse: JSON.stringify(validTranslations) };
-    } catch (e) {
-      console.error('Failed to parse translation response:', e, 'Raw response:', rawResponse);
-      throw new Error('Invalid translation response format - ' + e.message);
-    }
-  } else if (isSuggestion) {
-    // Pour les suggestions, on retourne directement le texte brut
-    return { rawResponse };
-  } else {
-    // Pour les tâches CRITIC uniquement, on attend un JSON
-    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      // We parse it here to extract highlights, but validation is separate
-      const parsedResult = JSON.parse(jsonMatch[0]);
-      analysisResult = parsedResult; // Store the parsed object
-      highlights = parsedResult.highlights || [];
-    } else {
-      throw new Error('No valid JSON object found in OpenAI response for CRITIC task');
-    }
-  }
-  return { analysisResult, highlights, rawResponse };
-}
-
 // Main API call orchestrator
 async function makeApiCall(apiKey, prompt, isHackerNews, isSuggestion) {
   let result;
@@ -350,15 +200,15 @@ async function makeApiCall(apiKey, prompt, isHackerNews, isSuggestion) {
     );
     console.log('Formatted suggestion prompt:', formattedPrompt);
 
-    if (apiKey.startsWith('sk-ant-')) {
-      result = await _callClaudeApi(apiKey, formattedPrompt, false);
-      console.log('Claude API suggestion response:', result);
-      return { suggestion: result.rawResponse.trim() };
-    } else {
-      result = await _callOpenAiApi(apiKey, formattedPrompt, false, false, true);
-      console.log('OpenAI API suggestion response:', result);
-      return { suggestion: result.rawResponse.trim() };
-    }
+    // Create API client
+    const client = ApiClientFactory.createClient(apiKey, {
+      maxTokens: MAX_TOKENS_REGULAR,
+      model: promptInstance.model
+    });
+
+    result = await client.call(formattedPrompt, { isSuggestion: true });
+    console.log('API suggestion response:', result);
+    return { suggestion: result.rawResponse.trim() };
   } else {
     // For other types, create appropriate prompt instance
     if (typeof prompt === 'string') {
@@ -376,13 +226,19 @@ async function makeApiCall(apiKey, prompt, isHackerNews, isSuggestion) {
     const formattedPrompt = promptInstance.formatWithContent(prompt);
     const isTranslation = promptInstance instanceof TranslationPrompt;
 
-    if (apiKey.startsWith('sk-ant-')) {
-      result = await _callClaudeApi(apiKey, formattedPrompt, isHackerNews);
-    } else if (apiKey.startsWith('sk-')) {
-      result = await _callOpenAiApi(apiKey, formattedPrompt, isHackerNews, isTranslation, false);
-    } else {
-      throw new Error('Invalid API key format');
-    }
+    // Create API client with appropriate options
+    const client = ApiClientFactory.createClient(apiKey, {
+      maxTokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : 
+                isTranslation ? MAX_TOKENS_TRANSLATION : 
+                MAX_TOKENS_REGULAR,
+      model: promptInstance.model
+    });
+
+    result = await client.call(formattedPrompt, { 
+      isHackerNews,
+      isTranslation,
+      isSuggestion: false
+    });
 
     // Validate response using the prompt instance's validation
     if (!isHackerNews && !isTranslation) {
