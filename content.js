@@ -44,10 +44,76 @@
     tooltip.style.left = `${left}px`;
   }
 
-  // Create tooltip element
+  // Fonction pour récupérer le contexte autour d'un texte
+  async function getTextContext(text) {
+    // Récupérer tout le texte de la page
+    const fullText = document.body.innerText;
+    const CONTEXT_LENGTH = 500;
+
+    // Trouver la position du texte dans le texte complet
+    const index = fullText.indexOf(text);
+    if (index === -1) {
+      console.warn('Text not found in document');
+      return { before: '', after: '' };
+    }
+
+    // Extraire le contexte avant et après
+    const before = fullText.slice(Math.max(0, index - CONTEXT_LENGTH), index).trim();
+    const after = fullText.slice(index + text.length, index + text.length + CONTEXT_LENGTH).trim();
+
+    return { before, after };
+  }
+
+  // Function to request a suggestion from the LLM
+  async function requestAISuggestion(text, type, explanation) {
+    try {
+      console.log('Requesting AI suggestion:', { text, type, explanation });
+      
+      // Récupérer le contexte
+      const context = await getTextContext(text);
+      console.log('Context found:', context);
+      
+      // Envoyer directement au sidepanel avec le contexte
+      const response = await chrome.runtime.sendMessage({
+        action: 'makeApiCall',
+        data: {
+          text: text,
+          analysisType: type,
+          explanation: explanation,
+          context: {
+            before: context.before,
+            after: context.after
+          }
+        }
+      });
+
+      console.log('Received AI suggestion response:', response);
+
+      if (response.error) {
+        console.error('Error in AI suggestion response:', response.error);
+        throw new Error(response.error);
+      }
+
+      return response.suggestion;
+    } catch (error) {
+      console.error('Error requesting AI suggestion:', error);
+      throw error;
+    }
+  }
+
+  // Function to create a tooltip
   function createTooltip(text, type, explanation, suggestion) {
     const tooltip = document.createElement('div');
     tooltip.className = 'content-critic-tooltip';
+    tooltip.style.display = 'none'; // Hide initially
+    
+    // Container principal flex pour le contenu et la suggestion IA
+    const mainContent = document.createElement('div');
+    mainContent.className = 'content-critic-main-content';
+    
+    // Container pour le contenu principal (type, explication, suggestion originale)
+    const leftContent = document.createElement('div');
+    leftContent.className = 'content-critic-left-content';
     
     // Type badge
     const typeBadge = document.createElement('div');
@@ -59,31 +125,94 @@
     explanationText.className = 'content-critic-explanation';
     explanationText.textContent = explanation;
     
-    // Add elements in order
-    tooltip.appendChild(typeBadge);
-    tooltip.appendChild(explanationText);
+    // Add elements to left content
+    leftContent.appendChild(typeBadge);
+    leftContent.appendChild(explanationText);
     
-    // Suggestion (if any)
+    // Suggestion container
+    const suggestionContainer = document.createElement('div');
+    suggestionContainer.className = 'content-critic-suggestion';
+    
+    // Suggestion header with AI button
+    const suggestionHeader = document.createElement('div');
+    suggestionHeader.className = 'content-critic-suggestion-header';
+    
+    const aiButton = document.createElement('button');
+    aiButton.className = 'content-critic-ai-button';
+    aiButton.innerHTML = '🤖 Ask AI';
+    
+    // Add loading state
+    let isLoading = false;
+    
+    // Container pour la suggestion originale
     if (suggestion) {
-      const suggestionContainer = document.createElement('div');
-      suggestionContainer.className = 'content-critic-suggestion';
-      
-      const suggestionLabel = document.createElement('div');
-      suggestionLabel.className = 'content-critic-suggestion-label';
-      suggestionLabel.textContent = 'Suggestion';
-      
-      const suggestionText = document.createElement('div');
-      suggestionText.className = 'content-critic-suggestion-text';
-      suggestionText.textContent = suggestion;
-      
-      suggestionContainer.appendChild(suggestionLabel);
-      suggestionContainer.appendChild(suggestionText);
-      tooltip.appendChild(suggestionContainer);
+      const originalSuggestion = document.createElement('div');
+      originalSuggestion.className = 'content-critic-suggestion-text original';
+      originalSuggestion.textContent = suggestion;
+      suggestionContainer.appendChild(originalSuggestion);
     }
     
-    // Add to body and position off-screen initially
-    tooltip.style.top = '-9999px';
-    tooltip.style.left = '-9999px';
+    // Container pour la suggestion IA (à droite)
+    const aiSuggestionContainer = document.createElement('div');
+    aiSuggestionContainer.className = 'content-critic-ai-suggestion';
+    
+    aiButton.addEventListener('click', async (e) => {
+      e.stopPropagation(); // Prevent tooltip from closing
+      
+      if (isLoading) return;
+      
+      try {
+        isLoading = true;
+        aiButton.classList.add('loading');
+        aiButton.disabled = true;
+        
+        const newSuggestion = await requestAISuggestion(text, type, explanation);
+        
+        // Créer ou mettre à jour la suggestion IA
+        let aiSuggestionText = aiSuggestionContainer.querySelector('.content-critic-suggestion-text');
+        if (!aiSuggestionText) {
+          aiSuggestionText = document.createElement('div');
+          aiSuggestionText.className = 'content-critic-suggestion-text ai';
+          aiSuggestionContainer.appendChild(aiSuggestionText);
+        }
+        aiSuggestionText.textContent = newSuggestion;
+        
+        // Ajouter la classe pour l'affichage côte à côte
+        tooltip.classList.add('has-ai-suggestion');
+        
+      } catch (error) {
+        console.error('Error getting AI suggestion:', error);
+        // Show error in tooltip
+        const errorText = document.createElement('div');
+        errorText.className = 'content-critic-error';
+        errorText.textContent = 'Erreur lors de la génération de la suggestion';
+        aiSuggestionContainer.appendChild(errorText);
+        
+        // Remove error after 3 seconds
+        setTimeout(() => {
+          errorText.remove();
+        }, 3000);
+      } finally {
+        isLoading = false;
+        aiButton.classList.remove('loading');
+        aiButton.disabled = false;
+      }
+    });
+    
+    suggestionHeader.appendChild(aiButton);
+    suggestionContainer.appendChild(suggestionHeader);
+    
+    // Add suggestion container to left content
+    leftContent.appendChild(suggestionContainer);
+    
+    // Add left content and AI suggestion container to main content
+    mainContent.appendChild(leftContent);
+    mainContent.appendChild(aiSuggestionContainer);
+    
+    // Add main content to tooltip
+    tooltip.appendChild(mainContent);
+    
+    // Add to body but keep it hidden
     document.body.appendChild(tooltip);
     
     return tooltip;
@@ -105,8 +234,12 @@
     box.addEventListener('mouseenter', () => {
       clearTimeout(hoverTimeout);
       const boxRect = box.getBoundingClientRect();
+      
+      // Position the tooltip
       positionTooltip(tooltip, boxRect);
-      tooltip.style.display = 'block'; // Ensure tooltip is visible
+      
+      // Show tooltip and trigger fade in
+      tooltip.style.display = 'block';
       requestAnimationFrame(() => {
         tooltip.classList.add('visible');
       });
@@ -115,7 +248,7 @@
     box.addEventListener('mouseleave', () => {
       hoverTimeout = setTimeout(() => {
         tooltip.classList.remove('visible');
-        // Hide tooltip after transition
+        // Hide tooltip after fade out
         tooltip.addEventListener('transitionend', () => {
           if (!tooltip.classList.contains('visible')) {
             tooltip.style.display = 'none';

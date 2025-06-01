@@ -63,6 +63,41 @@ CRITICAL RULES:
 Your answer must be in FRENCH.
 Please analyze and critique the following content:`;
 
+const CRITICAL_THINKING_PROMPT = `
+  <context>
+    I'm making an important business decision and I want to think through it rigorously.
+    The idea may relate to product strategy, market positioning, organizational design, or resource allocation.
+    I want to avoid blind spots, weak assumptions, or strategic traps.
+  </context>
+
+  <role>
+    Act as a strategic thought partner with the mindset of a skeptical investor, an experienced operator, and a rational analyst.
+    Your job is not to agree with me. Your job is to make my thinking sharper and more grounded.
+  </role>
+
+  <instructions>
+    Focus on clarity, business realism, and long-term consequences.
+    Avoid buzzwords, generalities, or surface-level reactions.
+    Think through the idea like you'd do if money, time, and reputation were on the line.
+  </instructions>
+
+  <structure>
+    <step1>Restate the core idea in your own words to make sure it's coherent and well-framed.</step1>
+    <step2>Identify implicit assumptions or areas I may be overlooking.</step2>
+    <step3>Ask 3 to 5 sharp questions that would help me think more clearly or expose risks.</step3>
+    <step4>Present strong counterpoints that someone skeptical would raise.</step4>
+    <step5>Suggest alternative ways to reach the same goal, if this one has flaws.</step5>
+    <step6>Give a quick clarity and focus check: does the idea feel crisp, grounded, and actionable?</step6>
+  </structure>
+
+  <tone>
+    Direct, clear, analytical. No hedging. No polite filler. No vague encouragement.
+  </tone>
+
+Your answer must be in FRENCH.
+Please analyze and critique the following content:
+`
+
 const HACKERNEWS_PROMPT = `Please provide a synthesis of the most important, opinionated, and surprising feedback from the HackerNews comments below. Additionally, you should highlight visionary ideas, mentions of competitors, identified opportunities, and raised challenges from the comments. 
 
 Your response should be detailed, structured, and actionable, including concrete examples from the comments to provide valuable context.
@@ -108,6 +143,32 @@ Input: {"t0":"Your enterprise data architecture is sprawling"}
 Output: {"t0":"Votre architecture de données","t1":"d'entreprise est étendue"}  // WRONG: split into two translations
 
 Texts: `;
+
+const SUGGESTION_PROMPT = `En tant qu'expert en analyse de contenu, je te demande de suggérer une amélioration pour le texte suivant :
+
+Type d'analyse: {analysisType}
+
+<previousContext>
+{contextBefore}
+</previousContext>
+
+<textAnalyzed>
+{text}
+</textAnalyzed>
+
+<followingContext>
+{contextAfter}
+</followingContext>
+
+<currentExplanation>
+{explanation}
+</currentExplanation>
+
+Peux-tu suggérer une amélioration ou une reformulation qui résoudrait le problème identifié (<currentExplanation>) ? 
+La suggestion ne doit pas prendre plus de 500 caractères.
+Prends en compte le contexte avant (previousContext) et après (followingContext) pour proposer une suggestion qui s'intègre naturellement dans le texte.
+Réponds uniquement avec ton amélioration, sans explication supplémentaire.
+`;
 
 // Sauvegarde la clé API
 function saveApiKey() {
@@ -325,11 +386,12 @@ async function _callClaudeApi(apiKey, prompt, isHackerNews) {
 }
 
 // Helper function to call OpenAI API
-async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation) {
+async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation, isSuggestion = false) {
   console.log('OpenAI task detection:', {
     isTranslation,
     isHackerNews,
-    promptStart: prompt.substring(0, 50),
+    isSuggestion,
+    promptStart: typeof prompt === 'string' ? prompt.substring(0, 50) : 'object prompt',
     translationPromptStart: isTranslation ? TRANSLATION_PROMPT.substring(0, 50) : undefined
   });
 
@@ -356,8 +418,6 @@ async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation) {
   const requestBody = {
     model: model,
     messages: messages,
-    //max_tokens: maxTokens, // Max tokens is often not needed and can cause issues with newer models
-    //temperature: isTranslation ? 0.1 : 0.7, // Temperature is also often best left to default
     response_format: isTranslation ? { type: "json_object" } : undefined
   };
   console.log('OpenAI API request:', requestBody);
@@ -372,11 +432,11 @@ async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation) {
   });
 
   const data = await apiResponse.json();
-
+      
   if (data.error) {
     throw new Error(data.error.message);
   }
-
+      
   const rawResponse = data.choices[0].message.content;
   let analysisResult;
   let highlights = [];
@@ -407,10 +467,11 @@ async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation) {
       console.error('Failed to parse translation response:', e, 'Raw response:', rawResponse);
       throw new Error('Invalid translation response format - ' + e.message);
     }
+  } else if (isSuggestion) {
+    // Pour les suggestions, on retourne directement le texte brut
+    return { rawResponse };
   } else {
-    // For OpenAI, non-HackerNews, non-translation (i.e., CRITIC task)
-    // The response is expected to be a JSON object.
-    // Validation will happen in the main makeApiCall function.
+    // Pour les tâches CRITIC uniquement, on attend un JSON
     const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       // We parse it here to extract highlights, but validation is separate
@@ -425,31 +486,66 @@ async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation) {
 }
 
 // Main API call orchestrator
-async function makeApiCall(apiKey, prompt, isHackerNews) {
+async function makeApiCall(apiKey, prompt, isHackerNews, isSuggestion) {
   let result;
-  const isTranslation = prompt.startsWith(TRANSLATION_PROMPT);
+  
+  // Détecter le type de prompt en premier
+  const isTranslation = typeof prompt === 'string' && prompt.startsWith(TRANSLATION_PROMPT);
+
+  console.log('makeApiCall:', { 
+    isTranslation, 
+    isSuggestion, 
+    promptType: typeof prompt,
+    hasAnalysisType: !!prompt?.analysisType,
+    hasText: !!prompt?.text,
+    hasExplanation: !!prompt?.explanation
+  });
+
+  // Handle suggestion type
+  if (isSuggestion) {
+    console.log('Processing suggestion request:', prompt);
+    const suggestionPrompt = SUGGESTION_PROMPT
+      .replace('{analysisType}', prompt.analysisType)
+      .replace('{text}', prompt.text)
+      .replace('{explanation}', prompt.explanation)
+      .replace('{contextBefore}', prompt.context?.before || '')
+      .replace('{contextAfter}', prompt.context?.after || '');
+
+    console.log('Formatted suggestion prompt:', suggestionPrompt);
+
+    if (apiKey.startsWith('sk-ant-')) {
+      result = await _callClaudeApi(apiKey, suggestionPrompt, false);
+      console.log('Claude API suggestion response:', result);
+      return { suggestion: result.rawResponse.trim() };
+    } else {
+      result = await _callOpenAiApi(apiKey, suggestionPrompt, false, false, true);
+      console.log('OpenAI API suggestion response:', result);
+      return { suggestion: result.rawResponse.trim() };
+    }
+  }
+
+  // Handle other types (critic, translation, etc.)
+  if (typeof prompt !== 'string') {
+    throw new Error('Invalid prompt format for non-suggestion requests');
+  }
 
   if (apiKey.startsWith('sk-ant-')) {
     result = await _callClaudeApi(apiKey, prompt, isHackerNews);
   } else if (apiKey.startsWith('sk-')) {
-    result = await _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation);
+    result = await _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation, false);
   } else {
     throw new Error('Invalid API key format');
   }
 
   // Validate CRITIC response structure for non-HackerNews, non-translation calls
-  // The `analysisResult` from helpers is expected to be a parsed JSON object for CRITIC tasks
   if (!isHackerNews && !isTranslation) {
     if (!result.analysisResult || typeof result.analysisResult !== 'object') {
       throw new Error('Analysis result is not a valid object for CRITIC task.');
     }
     validateCriticResponse(result.analysisResult);
-    // Ensure highlights are taken from the validated analysisResult
     result.highlights = result.analysisResult.highlights;
   }
   
-  // For translation, only rawResponse is returned by the helper.
-  // For other cases, analysisResult, highlights, and rawResponse are returned.
   return result;
 }
 
@@ -507,7 +603,7 @@ async function _executeAnalysisAndUpdateUI(contentToAnalyze, tabInfo, apiKey) {
       estimatedTokens: Math.ceil(prompt.length / 4)
     });
 
-    const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews);
+    const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews, false);
     currentRawResponse = rawResponse; // Update global raw response
 
     await storeAnalysisResults(urlKey, {
@@ -1463,7 +1559,7 @@ const TranslationModule = (function() {
     });
     
     try {
-      const { rawResponse } = await makeApiCall(apiKey, prompt, false);
+      const { rawResponse } = await makeApiCall(apiKey, prompt, false, false);
       
       console.log('Raw translation response:', rawResponse);
       
@@ -1586,3 +1682,38 @@ async function initializeExtension() {
     console.error('Error during initialization:', error);
   }
 }
+
+// Update message listener to remove type parameter
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'makeApiCall') {
+    // Get API key from storage
+    chrome.storage.local.get(['apiKey'], async (result) => {
+      if (!result.apiKey) {
+        sendResponse({ error: 'API key not found. Please set your API key in the extension settings.' });
+        return;
+      }
+
+      try {
+        // Détecter si c'est une suggestion
+        const isSuggestion = typeof request.data === 'object' && 
+                           request.data.analysisType && 
+                           request.data.text && 
+                           request.data.explanation;
+
+        console.log('makeApiCall message:', { 
+          isSuggestion,
+          dataType: typeof request.data,
+          hasAnalysisType: !!request.data?.analysisType,
+          hasText: !!request.data?.text,
+          hasExplanation: !!request.data?.explanation
+        });
+
+        const response = await makeApiCall(result.apiKey, request.data, false, isSuggestion);
+        sendResponse(response);
+      } catch (error) {
+        sendResponse({ error: error.message });
+      }
+    });
+    return true; // Keep the message channel open for async response
+  }
+});
