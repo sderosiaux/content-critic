@@ -466,7 +466,7 @@
     });
 
     if (highlightCount === 0) {
-      console.warn('No highlights were added. This might indicate a problem with text matching or DOM structure for:', normalizedSearchText);
+      console.info('No highlights were added. This might indicate a problem with text matching or DOM structure for:', normalizedSearchText);
     }
   }
 
