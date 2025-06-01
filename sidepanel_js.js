@@ -1,5 +1,9 @@
 // sidepanel.js
-let contentType = 'generic';
+import { 
+  PromptFactory,
+  TranslationPrompt
+} from './prompts.js';
+
 let currentTabId = null;
 let isAnalyzing = false;  // Add state tracking for analysis
 
@@ -13,162 +17,6 @@ let currentRawContent = null;
 
 // Raw response handling
 let currentRawResponse = null;
-
-const CRITIC_PROMPT = `You are a sharp, relentless content critic.
-Your job is to break down any post, article, or idea I give you.
-
-You do not summarize. You do not agree. You challenge.
-
-You focus on:
-- Uncovering assumptions (stated or hidden)
-- Spotting contradictions or weak logic
-- Testing ideas with second-order thinking, inversion, tradeoffs, and leverage analysis
-- Surfacing what others miss: blind spots, sharper framings, edge opportunities
-
-Ask hard questions like:
-- What breaks this?
-- What's assumed? What are the tradeoffs?
-- What's a better wedge or leverage?
-- If this is true, what becomes the next constraint?
-
-Tone:
-- No fluff. No praise unless it serves the analysis. Stay curious, sharp, and bold. Push thinking further.
-
-Output rules: return ONLY a valid JSON object like this:
-{
-  "analysis": {
-    "summary": "A 5-10 rows table (Markdown format) summary highlighting core premise, risks, effects, and tradeoffs",
-    "critique": "Your detailed analysis and critique in markdown format using #, ##, ### for headers."
-  },
-  "highlights": [
-    {
-      "text": "EXACT QUOTE FROM THE CONTENT - Copy and paste the exact text you want to highlight, word for word",
-      "type": "fluff|fallacy|assumption|contradiction|inconsistency",
-      "explanation": "Your analysis of why this text is problematic",
-      "suggestion": "Optional suggestion for improvement"
-    }
-  ]
-}
-
-CRITICAL RULES:
-1. Return ONLY the JSON object, with no other text, it must be valid and complete
-2. Do not include any markdown formatting outside of the JSON
-3. Do not include any explanations or notes outside of the JSON
-5. Each highlight's "text" field must be an EXACT quote from the content, NOT altered, NOT paraphrased, NOT summarized, NOT changed in any way.
-6. Do not put your analysis in the "text" field - use the "explanation" field instead
-7. Please generate minimum 5 and maximum 15 highlights. The more the better.
-8. DO NOT wrap markdown tables or headers in \`\`\`markdown\`\`\` or any other code block markers
-9. Highlight types MUST only be one of: fluff|fallacy|assumption|contradiction|inconsistency.
-
-Your answer must be in FRENCH.
-Please analyze and critique the following content:`;
-
-const CRITICAL_THINKING_PROMPT = `
-  <context>
-    I'm making an important business decision and I want to think through it rigorously.
-    The idea may relate to product strategy, market positioning, organizational design, or resource allocation.
-    I want to avoid blind spots, weak assumptions, or strategic traps.
-  </context>
-
-  <role>
-    Act as a strategic thought partner with the mindset of a skeptical investor, an experienced operator, and a rational analyst.
-    Your job is not to agree with me. Your job is to make my thinking sharper and more grounded.
-  </role>
-
-  <instructions>
-    Focus on clarity, business realism, and long-term consequences.
-    Avoid buzzwords, generalities, or surface-level reactions.
-    Think through the idea like you'd do if money, time, and reputation were on the line.
-  </instructions>
-
-  <structure>
-    <step1>Restate the core idea in your own words to make sure it's coherent and well-framed.</step1>
-    <step2>Identify implicit assumptions or areas I may be overlooking.</step2>
-    <step3>Ask 3 to 5 sharp questions that would help me think more clearly or expose risks.</step3>
-    <step4>Present strong counterpoints that someone skeptical would raise.</step4>
-    <step5>Suggest alternative ways to reach the same goal, if this one has flaws.</step5>
-    <step6>Give a quick clarity and focus check: does the idea feel crisp, grounded, and actionable?</step6>
-  </structure>
-
-  <tone>
-    Direct, clear, analytical. No hedging. No polite filler. No vague encouragement.
-  </tone>
-
-Your answer must be in FRENCH.
-Please analyze and critique the following content:
-`
-
-const HACKERNEWS_PROMPT = `Please provide a synthesis of the most important, opinionated, and surprising feedback from the HackerNews comments below. Additionally, you should highlight visionary ideas, mentions of competitors, identified opportunities, and raised challenges from the comments. 
-
-Your response should be detailed, structured, and actionable, including concrete examples from the comments to provide valuable context.
-
-Structure your analysis as follows:
-- **Key Opinions & Surprising Takes**: Most thought-provoking viewpoints
-- **Visionary Ideas**: Forward-thinking concepts and predictions  
-- **Competitive Landscape**: Mentions of competitors, alternatives, comparisons
-- **Opportunities**: Business, technical, or strategic opportunities identified
-- **Challenges & Concerns**: Major issues, risks, and obstacles raised
-- **Actionable Insights**: Concrete takeaways and next steps
-
-Don't add comments before and after your analysis.
-Answer using the markdown format only, using #, ##, ### for headers.
-Each opinion should be a subtitle followed by some explanation.
-
-Your answer must be in FRENCH.
-Here are the HackerNews comments to analyze:`;
-
-const TRANSLATION_PROMPT = `You are a translator. Return a JSON object of French translations.
-
-FORMAT: {"t0":"translation0","t1":"translation1",...}
-
-CRITICAL RULES:
-1. Return ONLY a valid JSON object
-2. Keep tech terms in English
-3. Keep numbers/units unchanged
-4. Remove unnecessary words only if that does not change the order of the translations
-5. IMPORTANT: Each input key (t0, t1, etc.) MUST have exactly one translation
-6. IMPORTANT: NEVER split a single input text into multiple translations
-7. IMPORTANT: NEVER merge multiple input texts into one translation
-8. IMPORTANT: Maintain the exact order of translations (t0, t1, t2, etc.)
-9. IMPORTANT: Do not add or remove any keys
-10. IMPORTANT: Each translation must be a complete, standalone translation of its input text
-11. IMPORTANT: If an input text contains multiple sentences, keep them together in one translation
-
-Example of CORRECT behavior:
-Input: {"t0":"Hello world","t1":"API endpoint","t2":"Your enterprise data architecture is sprawling"}
-Output: {"t0":"Bonjour le monde","t1":"API endpoint","t2":"Votre architecture de données d'entreprise est étendue"}
-
-Example of INCORRECT behavior (DO NOT DO THIS):
-Input: {"t0":"Your enterprise data architecture is sprawling"}
-Output: {"t0":"Votre architecture de données","t1":"d'entreprise est étendue"}  // WRONG: split into two translations
-
-Texts: `;
-
-const SUGGESTION_PROMPT = `En tant qu'expert en analyse de contenu, je te demande de suggérer une amélioration pour le texte suivant :
-
-Type d'analyse: {analysisType}
-
-<previousContext>
-{contextBefore}
-</previousContext>
-
-<textAnalyzed>
-{text}
-</textAnalyzed>
-
-<followingContext>
-{contextAfter}
-</followingContext>
-
-<currentExplanation>
-{explanation}
-</currentExplanation>
-
-Peux-tu suggérer une amélioration ou une reformulation qui résoudrait le problème identifié (<currentExplanation>) ? 
-La suggestion ne doit pas prendre plus de 500 caractères.
-Prends en compte le contexte avant (previousContext) et après (followingContext) pour proposer une suggestion qui s'intègre naturellement dans le texte.
-Réponds uniquement avec ton amélioration, sans explication supplémentaire.
-`;
 
 // Sauvegarde la clé API
 function saveApiKey() {
@@ -337,7 +185,7 @@ function validateCriticResponse(result) {
 // Helper function to call Claude API
 async function _callClaudeApi(apiKey, prompt, isHackerNews) {
   const requestBody = {
-    model: 'claude-3-sonnet-20240229',
+    model: prompt.model || 'claude-3-sonnet-20240229',
     max_tokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
     messages: [{
       role: 'user',
@@ -392,7 +240,7 @@ async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation, isSug
     isHackerNews,
     isSuggestion,
     promptStart: typeof prompt === 'string' ? prompt.substring(0, 50) : 'object prompt',
-    translationPromptStart: isTranslation ? TRANSLATION_PROMPT.substring(0, 50) : undefined
+    translationPromptStart: isTranslation ? prompt.substring(0, 50) : undefined
   });
 
   // DO NOT CHANGE THE MODELS USED HERE
@@ -489,61 +337,61 @@ async function _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation, isSug
 async function makeApiCall(apiKey, prompt, isHackerNews, isSuggestion) {
   let result;
   
-  // Détecter le type de prompt en premier
-  const isTranslation = typeof prompt === 'string' && prompt.startsWith(TRANSLATION_PROMPT);
-
-  console.log('makeApiCall:', { 
-    isTranslation, 
-    isSuggestion, 
-    promptType: typeof prompt,
-    hasAnalysisType: !!prompt?.analysisType,
-    hasText: !!prompt?.text,
-    hasExplanation: !!prompt?.explanation
-  });
-
-  // Handle suggestion type
+  // Create appropriate prompt instance
+  let promptInstance;
   if (isSuggestion) {
-    console.log('Processing suggestion request:', prompt);
-    const suggestionPrompt = SUGGESTION_PROMPT
-      .replace('{analysisType}', prompt.analysisType)
-      .replace('{text}', prompt.text)
-      .replace('{explanation}', prompt.explanation)
-      .replace('{contextBefore}', prompt.context?.before || '')
-      .replace('{contextAfter}', prompt.context?.after || '');
-
-    console.log('Formatted suggestion prompt:', suggestionPrompt);
+    promptInstance = PromptFactory.createPrompt('suggestion');
+    const formattedPrompt = promptInstance.getPrompt(
+      prompt.analysisType,
+      prompt.text,
+      prompt.explanation,
+      prompt.context?.before || '',
+      prompt.context?.after || ''
+    );
+    console.log('Formatted suggestion prompt:', formattedPrompt);
 
     if (apiKey.startsWith('sk-ant-')) {
-      result = await _callClaudeApi(apiKey, suggestionPrompt, false);
+      result = await _callClaudeApi(apiKey, formattedPrompt, false);
       console.log('Claude API suggestion response:', result);
       return { suggestion: result.rawResponse.trim() };
     } else {
-      result = await _callOpenAiApi(apiKey, suggestionPrompt, false, false, true);
+      result = await _callOpenAiApi(apiKey, formattedPrompt, false, false, true);
       console.log('OpenAI API suggestion response:', result);
       return { suggestion: result.rawResponse.trim() };
     }
-  }
-
-  // Handle other types (critic, translation, etc.)
-  if (typeof prompt !== 'string') {
-    throw new Error('Invalid prompt format for non-suggestion requests');
-  }
-
-  if (apiKey.startsWith('sk-ant-')) {
-    result = await _callClaudeApi(apiKey, prompt, isHackerNews);
-  } else if (apiKey.startsWith('sk-')) {
-    result = await _callOpenAiApi(apiKey, prompt, isHackerNews, isTranslation, false);
   } else {
-    throw new Error('Invalid API key format');
-  }
-
-  // Validate CRITIC response structure for non-HackerNews, non-translation calls
-  if (!isHackerNews && !isTranslation) {
-    if (!result.analysisResult || typeof result.analysisResult !== 'object') {
-      throw new Error('Analysis result is not a valid object for CRITIC task.');
+    // For other types, create appropriate prompt instance
+    if (typeof prompt === 'string') {
+      if (prompt.includes('HackerNews comments')) {
+        promptInstance = PromptFactory.createPrompt('hackernews');
+      } else if (prompt.includes('translator')) {
+        promptInstance = PromptFactory.createPrompt('translation');
+      } else {
+        promptInstance = PromptFactory.createPrompt('critic');
+      }
+    } else {
+      throw new Error('Invalid prompt format for non-suggestion requests');
     }
-    validateCriticResponse(result.analysisResult);
-    result.highlights = result.analysisResult.highlights;
+
+    const formattedPrompt = promptInstance.formatWithContent(prompt);
+    const isTranslation = promptInstance instanceof TranslationPrompt;
+
+    if (apiKey.startsWith('sk-ant-')) {
+      result = await _callClaudeApi(apiKey, formattedPrompt, isHackerNews);
+    } else if (apiKey.startsWith('sk-')) {
+      result = await _callOpenAiApi(apiKey, formattedPrompt, isHackerNews, isTranslation, false);
+    } else {
+      throw new Error('Invalid API key format');
+    }
+
+    // Validate response using the prompt instance's validation
+    if (!isHackerNews && !isTranslation) {
+      if (!result.analysisResult || typeof result.analysisResult !== 'object') {
+        throw new Error('Analysis result is not a valid object for CRITIC task.');
+      }
+      promptInstance.validateResponse(result.analysisResult);
+      result.highlights = result.analysisResult.highlights;
+    }
   }
   
   return result;
@@ -590,9 +438,11 @@ async function _executeAnalysisAndUpdateUI(contentToAnalyze, tabInfo, apiKey) {
     document.getElementById('rawContentTokenInfo').textContent = tokenInfo.displayText;
 
     const isHackerNews = tabInfo.url.includes('news.ycombinator.com');
-    const prompt = isHackerNews ?
-      HACKERNEWS_PROMPT + '\n\n' + contentToAnalyze :
-      CRITIC_PROMPT + '\n\n' + contentToAnalyze;
+    const promptInstance = isHackerNews ? 
+      PromptFactory.createPrompt('hackernews') :
+      PromptFactory.createPrompt('critic');
+
+    const prompt = promptInstance.formatWithContent(contentToAnalyze);
 
     console.log('Using prompt for:', isHackerNews ? 'HackerNews' : 'Generic content');
     console.log('Token limits:', {
@@ -1549,8 +1399,9 @@ const TranslationModule = (function() {
       throw new Error('No API key found');
     }
     
-    // Use the prompt from the constant
-    const prompt = TRANSLATION_PROMPT + JSON.stringify(textNodes);
+    // Create translation prompt instance
+    const promptInstance = PromptFactory.createPrompt('translation');
+    const prompt = promptInstance.formatWithContent(JSON.stringify(textNodes));
 
     console.log('Translation prompt:', {
       nodeCount: Object.keys(textNodes).length,
@@ -1563,9 +1414,9 @@ const TranslationModule = (function() {
       
       console.log('Raw translation response:', rawResponse);
       
-      // Parse the response with strict validation
+      // Parse and validate the response
       const parsed = JSON.parse(rawResponse);
-      console.log('Parsed response:', parsed);
+      promptInstance.validateResponse(parsed);
       
       // Handle both array of objects and direct object formats
       let translations = {};
