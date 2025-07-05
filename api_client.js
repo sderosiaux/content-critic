@@ -2,7 +2,6 @@
 class ApiClient {
   constructor(options = {}) {
     this.model = options.model;
-    this.maxTokens = options.maxTokens;
     this.apiKey = options.apiKey;
   }
 
@@ -37,12 +36,12 @@ class ApiClient {
     if (response.error) {
       throw new Error(response.error.message);
     }
-    return this.parseResponse(response);
+    return this.extractRawResponse(response);
   }
 
-  // Abstract method for response parsing
-  parseResponse(response) {
-    throw new Error('parseResponse() must be implemented by subclass');
+  // Abstract method for extracting raw response
+  extractRawResponse(response) {
+    throw new Error('extractRawResponse() must be implemented by subclass');
   }
 }
 
@@ -83,20 +82,8 @@ class ClaudeApiClient extends ApiClient {
     return this.handleResponse(data);
   }
 
-  parseResponse(response) {
-    const rawResponse = response.content[0].text;
-    let analysisResult;
-    let highlights = [];
-
-    // For Claude, the response is expected to be a JSON object for CRITIC tasks
-    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsedResult = JSON.parse(jsonMatch[0]);
-      analysisResult = parsedResult;
-      highlights = parsedResult.highlights || [];
-    }
-
-    return { analysisResult, highlights, rawResponse };
+  extractRawResponse(response) {
+    return response.content[0].text;
   }
 }
 
@@ -150,36 +137,8 @@ class OpenAiApiClient extends ApiClient {
     return this.handleResponse(data);
   }
 
-  parseResponse(response) {
-    const rawResponse = response.choices[0].message.content;
-    let analysisResult;
-    let highlights = [];
-
-    if (response.isTranslation) {
-      try {
-        const translations = JSON.parse(rawResponse);
-        if (typeof translations !== 'object' || Array.isArray(translations)) {
-          throw new Error('Response is not a JSON object');
-        }
-        return { rawResponse: JSON.stringify(translations) };
-      } catch (e) {
-        throw new Error('Invalid translation response format - ' + e.message);
-      }
-    } else if (response.isSuggestion) {
-      return { rawResponse };
-    } else {
-      const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsedResult = JSON.parse(jsonMatch[0]);
-        analysisResult = parsedResult;
-        highlights = parsedResult.highlights || [];
-      } else {
-        // string response
-        analysisResult = rawResponse;
-      }
-    }
-
-    return { analysisResult, highlights, rawResponse };
+  extractRawResponse(response) {
+    return response.choices[0].message.content;
   }
 }
 

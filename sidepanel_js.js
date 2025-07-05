@@ -1,7 +1,12 @@
 // sidepanel.js
 import { 
   PromptFactory,
-  TranslationPrompt
+  Prompt,
+  CriticPrompt,
+  CriticalThinkingPrompt,
+  HackerNewsPrompt,
+  TranslationPrompt,
+  SuggestionPrompt
 } from './prompts.js';
 import { ApiClientFactory } from './api_client.js';
 
@@ -115,142 +120,34 @@ function getUrlKey(url) {
   }
 }
 
-// Helper function to validate CRITIC response structure
-function validateCriticResponse(result) {
-  console.log('Validating CRITIC response:', result);
-  
-  // Check if result is an object
-  if (!result || typeof result !== 'object') {
-    throw new Error('Response must be a JSON object');
-  }
-  
-  // Check if analysis exists and is an object
-  if (!result.analysis || typeof result.analysis !== 'object') {
-    throw new Error('Response must have an "analysis" object');
-  }
-  
-  // Check if analysis has both summary and critique
-  if (!result.analysis.summary || typeof result.analysis.summary !== 'string') {
-    throw new Error('Analysis must have a "summary" string');
-  }
-  if (!result.analysis.critique || typeof result.analysis.critique !== 'string') {
-    throw new Error('Analysis must have a "critique" string');
-  }
-  
-  // Check if highlights exists and is an array
-  if (!Array.isArray(result.highlights)) {
-    throw new Error('Response must have a "highlights" array');
-  }
-  
-  // Validate each highlight
-  result.highlights.forEach((highlight, index) => {
-    if (!highlight || typeof highlight !== 'object') {
-      throw new Error(`Highlight at index ${index} must be an object`);
-    }
-    
-    // Check required fields
-    if (!highlight.text || typeof highlight.text !== 'string') {
-      throw new Error(`Highlight at index ${index} must have a "text" string`);
-    }
-    if (!highlight.type || typeof highlight.type !== 'string') {
-      throw new Error(`Highlight at index ${index} must have a "type" string`);
-    }
-    if (!highlight.explanation || typeof highlight.explanation !== 'string') {
-      throw new Error(`Highlight at index ${index} must have an "explanation" string`);
-    }
-    
-    // Validate type
-    const validTypes = ['fluff', 'fallacy', 'assumption', 'contradiction', 'inconsistency'];
-    if (!validTypes.includes(highlight.type)) {
-      throw new Error(`Highlight at index ${index} has invalid type "${highlight.type}". Must be one of: ${validTypes.join(', ')}`);
-    }
-    
-    // Validate suggestion (optional)
-    if (highlight.suggestion !== undefined && typeof highlight.suggestion !== 'string') {
-      throw new Error(`Highlight at index ${index} must have a "suggestion" string if provided`);
-    }
-  });
-  
-  // Validate highlight count
-  if (result.highlights.length < 5) {
-    throw new Error('Response must have at least 5 highlights');
-  }
-  if (result.highlights.length > 15) {
-    throw new Error('Response must have at most 15 highlights');
-  }
-  
-  console.log('CRITIC response validation passed');
-  return true;
-}
-
 // Main API call orchestrator
-async function makeApiCall(apiKey, prompt, isHackerNews, isSuggestion) {
-  let result;
-  
-  // Create appropriate prompt instance
-  let promptInstance;
-  if (isSuggestion) {
-    promptInstance = PromptFactory.createPrompt('suggestion');
-    const formattedPrompt = promptInstance.getPrompt(
-      prompt.analysisType,
-      prompt.text,
-      prompt.explanation,
-      prompt.context?.before || '',
-      prompt.context?.after || ''
-    );
-    console.log('Formatted suggestion prompt:', formattedPrompt);
-
-    // Create API client
-    const client = ApiClientFactory.createClient(apiKey, {
-      maxTokens: MAX_TOKENS_REGULAR,
-      model: promptInstance.model
-    });
-
-    result = await client.call(formattedPrompt, { isSuggestion: true });
-    console.log('API suggestion response:', result);
-    return { suggestion: result.rawResponse.trim() };
-  } else {
-    // For other types, create appropriate prompt instance
-    if (typeof prompt === 'string') {
-      if (prompt.includes('HackerNews comments')) {
-        promptInstance = PromptFactory.createPrompt('hackernews');
-      } else if (prompt.includes('translator')) {
-        promptInstance = PromptFactory.createPrompt('translation');
-      } else {
-        promptInstance = PromptFactory.createPrompt('critic');
-      }
-    } else {
-      throw new Error('Invalid prompt format for non-suggestion requests');
-    }
-
-    const formattedPrompt = promptInstance.formatWithContent(prompt);
-    const isTranslation = promptInstance instanceof TranslationPrompt;
-
-    // Create API client with appropriate options
-    const client = ApiClientFactory.createClient(apiKey, {
-      maxTokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : 
-                isTranslation ? MAX_TOKENS_TRANSLATION : 
-                MAX_TOKENS_REGULAR,
-      model: promptInstance.model
-    });
-
-    result = await client.call(formattedPrompt, { 
-      isHackerNews,
-      isTranslation,
-      isSuggestion: false
-    });
-
-    // Validate response using the prompt instance's validation
-    if (!isHackerNews && !isTranslation) {
-      if (!result.analysisResult || typeof result.analysisResult !== 'object') {
-        throw new Error('Analysis result is not a valid object for CRITIC task.');
-      }
-      promptInstance.validateResponse(result.analysisResult);
-      result.highlights = result.analysisResult.highlights;
-    }
+async function makeApiCall(promptInstance, content, options = {}) {
+  const apiKey = options.apiKey || await getApiKey();
+  if (!apiKey) {
+    throw new Error('No API key found');
   }
-  
-  return result;
+
+  // Create API client
+  const client = ApiClientFactory.createClient(apiKey, {
+    model: promptInstance.model
+  });
+
+  try {
+    // Format the prompt with content
+    const formattedPrompt = promptInstance.formatWithContent(content);
+    
+    // Make API call
+    const rawResponse = await client.call(formattedPrompt, options);
+
+    // Use prompt instance to parse and validate response
+    const parsedResponse = promptInstance.parseResponse(rawResponse);
+    promptInstance.validateResponse(parsedResponse);
+
+    return parsedResponse;
+  } catch (error) {
+    console.error('API call failed:', error);
+    throw error;
+  }
 }
 
 // Helper function to store analysis results
@@ -279,65 +176,84 @@ async function updateAnalyzingState(urlKey, isAnalyzing, tabId) {
 // New consolidated function to execute analysis and update UI
 async function _executeAnalysisAndUpdateUI(contentToAnalyze, tabInfo, apiKey) {
   const urlKey = getUrlKey(tabInfo.url);
-  currentTabId = tabInfo.id; // Ensure currentTabId is set for global use if needed
-  isAnalyzing = true; // Set global analyzing state
+  currentTabId = tabInfo.id;
+  isAnalyzing = true;
 
   setLoadingState(true);
   await updateAnalyzingState(urlKey, true, tabInfo.id);
 
   try {
-    // currentRawContent is updated with the content being analyzed
-    currentRawContent = contentToAnalyze; 
+    currentRawContent = contentToAnalyze;
     
-    // Update token info for the content being analyzed
     const tokenInfo = computeTokenInfo(contentToAnalyze);
     document.getElementById('rawContentTokenInfo').textContent = tokenInfo.displayText;
 
     const isHackerNews = tabInfo.url.includes('news.ycombinator.com');
-    const promptInstance = isHackerNews ? 
-      PromptFactory.createPrompt('hackernews') :
-      PromptFactory.createPrompt('critic');
+    const promptType = isHackerNews ? 'hackernews' : 'critic';
+    const promptInstance = PromptFactory.createPrompt(promptType);
 
-    const prompt = promptInstance.formatWithContent(contentToAnalyze);
-
-    console.log('Using prompt for:', isHackerNews ? 'HackerNews' : 'Generic content');
-    console.log('Token limits:', {
-      isHackerNews,
-      maxTokens: isHackerNews ? MAX_TOKENS_HACKERNEWS : MAX_TOKENS_REGULAR,
-      contentLength: contentToAnalyze.length,
-      promptLength: prompt.length,
-      estimatedTokens: Math.ceil(prompt.length / 4)
+    const response = await makeApiCall(promptInstance, contentToAnalyze, {
+      apiKey,
+      type: promptType
     });
+    currentRawResponse = response;
 
-    const { analysisResult, highlights, rawResponse } = await makeApiCall(apiKey, prompt, isHackerNews, false);
-    currentRawResponse = rawResponse; // Update global raw response
-
-    await storeAnalysisResults(urlKey, {
-      content: contentToAnalyze, // Store the analyzed content
+    // Store results based on prompt type
+    const storedData = {
+      content: contentToAnalyze,
       title: tabInfo.title,
       url: tabInfo.url,
-      analysis: analysisResult,
-      rawResponse,
-      highlights: isHackerNews ? [] : highlights,
-      type: isHackerNews ? 'hackernews' : 'generic',
+      type: promptType,
       tabId: tabInfo.id
-    });
+    };
 
-    if (!isHackerNews && highlights && highlights.length > 0) {
-      chrome.tabs.sendMessage(tabInfo.id, {
-        action: "highlightContent",
-        highlights: highlights
-      });
+    // Add prompt-specific data
+    switch (promptType) {
+      case 'critic':
+        storedData.analysis = response.analysis;
+        storedData.highlights = response.highlights;
+        // Send highlights to content script
+        if (response.highlights?.length > 0) {
+          chrome.tabs.sendMessage(tabInfo.id, {
+            action: "highlightContent",
+            highlights: response.highlights
+          });
+        }
+        break;
+      case 'hackernews':
+      case 'critical-thinking':
+        storedData.analysis = response.analysis;
+        break;
+      case 'translation':
+        storedData.translations = response.translations;
+        break;
+      case 'suggestion':
+        storedData.suggestion = response.suggestion;
+        break;
     }
+
+    await storeAnalysisResults(urlKey, storedData);
 
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (activeTab.id === tabInfo.id) {
-      displayResult(analysisResult, tabInfo.title);
+      // Display appropriate content based on prompt type
+      switch (promptType) {
+        case 'critic':
+        case 'hackernews':
+        case 'critical-thinking':
+          displayResult(response.analysis, tabInfo.title);
+          break;
+        case 'translation':
+          displayResult(JSON.stringify(response.translations, null, 2), tabInfo.title);
+          break;
+        case 'suggestion':
+          displayResult(response.suggestion, tabInfo.title);
+          break;
+      }
     }
 
   } catch (error) {
-    // Ensure that updateAnalyzingState is called with the correct tabId even in error scenarios
-    await updateAnalyzingState(urlKey, false, tabInfo.id); 
+    await updateAnalyzingState(urlKey, false, tabInfo.id);
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (activeTab.id === tabInfo.id) {
       displayError('Error: ' + error.message);
@@ -345,7 +261,7 @@ async function _executeAnalysisAndUpdateUI(contentToAnalyze, tabInfo, apiKey) {
   } finally {
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (activeTab.id === tabInfo.id) {
-      isAnalyzing = false; // Reset global analyzing state
+      isAnalyzing = false;
       setLoadingState(false);
     }
   }
@@ -968,23 +884,32 @@ async function loadStoredAnalysis(tabId) {
     // Sync UI state with the tab's analysis status
     await syncUIWithTabState(urlKey);
     
-    // Only show stored analysis if we have analysis data
-    if (tabData?.analysis) {
+    if (tabData) {
       console.log('Displaying stored analysis for URL:', tab.url);
-      displayResult(tabData.analysis, tabData.title);
       
-      // Store the raw content and response
+      // Display appropriate content based on prompt type
+      switch (tabData.type) {
+        case 'critic':
+        case 'hackernews':
+        case 'critical-thinking':
+          displayResult(tabData.analysis, tabData.title);
+          break;
+        case 'translation':
+          displayResult(JSON.stringify(tabData.translations, null, 2), tabData.title);
+          break;
+        case 'suggestion':
+          displayResult(tabData.suggestion, tabData.title);
+          break;
+      }
+      
       if (tabData.content) {
         currentRawContent = filterHighlights(tabData.content);
         const tokenInfo = document.getElementById('rawContentTokenInfo');
         tokenInfo.textContent = computeTokenInfo(currentRawContent).displayText;
       }
-      if (tabData.rawResponse) {
-        currentRawResponse = tabData.rawResponse;
-      }
 
-      // Restore highlights if we have them
-      if (tabData.highlights && tabData.highlights.length > 0) {
+      // Only restore highlights for critic prompts
+      if (tabData.type === 'critic' && tabData.highlights?.length > 0) {
         console.log('Restoring highlights:', tabData.highlights.length);
         try {
           await chrome.tabs.sendMessage(tabId, {
@@ -1257,35 +1182,34 @@ const TranslationModule = (function() {
     
     // Create translation prompt instance
     const promptInstance = PromptFactory.createPrompt('translation');
-    const prompt = promptInstance.formatWithContent(JSON.stringify(textNodes));
+    const content = JSON.stringify(textNodes);
 
     console.log('Translation prompt:', {
       nodeCount: Object.keys(textNodes).length,
       sampleNodes: Object.values(textNodes).slice(0, 3),
-      promptLength: prompt.length
+      contentLength: content.length
     });
     
     try {
-      const { rawResponse } = await makeApiCall(apiKey, prompt, false, false);
+      const response = await makeApiCall(promptInstance, content, {
+        apiKey,
+        type: 'translation'
+      });
       
-      console.log('Raw translation response:', rawResponse);
-      
-      // Parse and validate the response
-      const parsed = JSON.parse(rawResponse);
-      promptInstance.validateResponse(parsed);
+      console.log('Translation response:', response);
       
       // Handle both array of objects and direct object formats
       let translations = {};
-      if (Array.isArray(parsed)) {
+      if (Array.isArray(response.translations)) {
         // Convert array of objects to single object
-        parsed.forEach(item => {
+        response.translations.forEach(item => {
           const key = Object.keys(item)[0];
           if (key && key.startsWith('t')) {
             translations[key] = item[key];
           }
         });
-      } else if (typeof parsed === 'object') {
-        translations = parsed;
+      } else if (typeof response.translations === 'object') {
+        translations = response.translations;
       } else {
         throw new Error('Invalid response format');
       }
@@ -1415,8 +1339,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           hasExplanation: !!request.data?.explanation
         });
 
-        const response = await makeApiCall(result.apiKey, request.data, false, isSuggestion);
-        sendResponse(response);
+        if (isSuggestion) {
+          const promptInstance = new SuggestionPrompt();
+          const response = await makeApiCall(promptInstance, request.data, {
+            apiKey: result.apiKey,
+            type: 'suggestion'
+          });
+          sendResponse(response);
+        } else {
+          throw new Error('Invalid request format for non-suggestion requests');
+        }
       } catch (error) {
         sendResponse({ error: error.message });
       }

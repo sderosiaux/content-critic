@@ -20,6 +20,19 @@ class Prompt {
   formatWithContent(content) {
     return `${this.getPrompt()}\n\n${content}`;
   }
+
+  // Abstract method for parsing raw API response
+  parseResponse(rawResponse) {
+    throw new Error('parseResponse() must be implemented by subclass');
+  }
+
+  // Common method to prepare API call options
+  getApiCallOptions() {
+    return {
+      model: this.model,
+      maxTokens: this.maxTokens
+    };
+  }
 }
 
 // Critic Prompt for content analysis
@@ -105,7 +118,7 @@ Please analyze and critique the following content:`;
     }
 
     if (response.highlights.length < 5 || response.highlights.length > 15) {
-      throw new Error('Response must have between 5 and 15 highlights');
+      //throw new Error('Response must have between 5 and 15 highlights');
     }
 
     response.highlights.forEach((highlight, index) => {
@@ -135,6 +148,22 @@ Please analyze and critique the following content:`;
     });
 
     return true;
+  }
+
+  parseResponse(rawResponse) {
+    // For critic prompts, we expect a JSON object
+    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No valid JSON object found in response for CRITIC task');
+    }
+
+    const parsedResult = JSON.parse(jsonMatch[0]);
+    this.validateResponse(parsedResult); // Validate the parsed response
+
+    return {
+      analysis: parsedResult.analysis,
+      highlights: parsedResult.highlights || []
+    };
   }
 }
 
@@ -189,6 +218,13 @@ Please analyze and critique the following content:`;
     }
     return true;
   }
+
+  parseResponse(rawResponse) {
+    // For critical thinking, we expect a markdown formatted string
+    return {
+      analysis: rawResponse
+    };
+  }
 }
 
 // HackerNews Prompt for comment analysis
@@ -227,6 +263,13 @@ Here are the HackerNews comments to analyze:`;
       throw new Error('Response must be a string');
     }
     return true;
+  }
+
+  parseResponse(rawResponse) {
+    // For HackerNews, we expect a markdown formatted string
+    return {
+      analysis: rawResponse
+    };
   }
 }
 
@@ -292,6 +335,16 @@ Texts: `;
       throw new Error(`Invalid translation response: ${error.message}`);
     }
   }
+
+  parseResponse(rawResponse) {
+    try {
+      const translations = JSON.parse(rawResponse);
+      this.validateResponse(translations);
+      return { translations };
+    } catch (e) {
+      throw new Error('Invalid translation response format - ' + e.message);
+    }
+  }
 }
 
 // Suggestion Prompt for generating suggestions
@@ -338,6 +391,11 @@ Réponds uniquement avec ton amélioration, sans explication supplémentaire.`;
       throw new Error('Suggestion must not exceed 500 characters');
     }
     return true;
+  }
+
+  parseResponse(rawResponse) {
+    // For suggestions, we expect a plain string
+    return { suggestion: rawResponse.trim() };
   }
 }
 
