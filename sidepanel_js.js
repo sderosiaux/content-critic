@@ -139,9 +139,11 @@ async function makeApiCall(promptInstance, content, options = {}) {
     // Make API call
     const rawResponse = await client.call(formattedPrompt, options);
 
-    // Use prompt instance to parse and validate response
+    // Validate the raw response first
+    promptInstance.validateResponse(rawResponse);
+
+    // Use prompt instance to parse response
     const parsedResponse = promptInstance.parseResponse(rawResponse);
-    promptInstance.validateResponse(parsedResponse);
 
     return parsedResponse;
   } catch (error) {
