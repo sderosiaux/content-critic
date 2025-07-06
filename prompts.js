@@ -221,6 +221,7 @@ Please analyze and critique the following content:`;
 
   parseResponse(rawResponse) {
     // For critical thinking, we expect a markdown formatted string
+    this.validateResponse(rawResponse); // Validate the raw response
     return {
       analysis: rawResponse
     };
@@ -267,6 +268,7 @@ Here are the HackerNews comments to analyze:`;
 
   parseResponse(rawResponse) {
     // For HackerNews, we expect a markdown formatted string
+    this.validateResponse(rawResponse); // Validate the raw response
     return {
       analysis: rawResponse
     };
@@ -395,6 +397,7 @@ Réponds uniquement avec ton amélioration, sans explication supplémentaire.`;
 
   parseResponse(rawResponse) {
     // For suggestions, we expect a plain string
+    this.validateResponse(rawResponse); // Validate the raw response
     return { suggestion: rawResponse.trim() };
   }
 }
